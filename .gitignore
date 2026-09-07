@@ -1,0 +1,29 @@
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Environment secrets
+.env
+
+# Logs
+logs/*.log
+
+# Generated reports
+reports/pdf/*
+reports/excel/*
+
+# Temporary files
+media/temporary/*
+
+# IDE
+.vscode/
+
+# Test cache
+.pytest_cache/
+
+# OS files
+Thumbs.db
+.DS_Store
