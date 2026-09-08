@@ -27,3 +27,10 @@ media/temporary/*
 # OS files
 Thumbs.db
 .DS_Store
+# Private application data and database backups
+media/members/*
+media/gallery/*
+media/history/*
+media/videos/*
+media/documents/*
+backups/*
