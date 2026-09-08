@@ -34,3 +34,7 @@ media/history/*
 media/videos/*
 media/documents/*
 backups/*
+
+# Private restore staging and launcher diagnostics
+.family-restore-*/
+logs/*.err

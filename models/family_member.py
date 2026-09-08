@@ -15,6 +15,11 @@ if TYPE_CHECKING:
     from models.user import User
 
 
+class FamilyAffiliationType(enum.Enum):
+    LINEAGE_MEMBER = "LINEAGE_MEMBER"
+    MARRIED_IN = "MARRIED_IN"
+
+
 class Sex(enum.Enum):
     MALE = "MALE"
     FEMALE = "FEMALE"
@@ -55,6 +60,9 @@ class FamilyMember(Base):
         nullable=False,
         index=True,
     )
+    affiliation_type: Mapped[FamilyAffiliationType] = mapped_column(
+        SAEnum(FamilyAffiliationType, name="family_affiliation_type"), nullable=False,
+        default=FamilyAffiliationType.LINEAGE_MEMBER, server_default="LINEAGE_MEMBER", index=True)
     date_of_birth: Mapped[date | None] = mapped_column(Date)
     phone_number: Mapped[str | None] = mapped_column(String(30), index=True)
     current_residence: Mapped[str | None] = mapped_column(String(255), index=True)

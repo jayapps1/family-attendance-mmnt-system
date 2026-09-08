@@ -1,4 +1,4 @@
-from ui.components import Screen, display
+from ui.components import Screen, display, show_details
 from ui.meetings.meeting_form import meeting_form
 
 
@@ -19,7 +19,7 @@ class MeetingList(Screen):
 
     def details(self):
         row = self.grid.selected()
-        self.show_text("Meeting details", "\n".join(f"{k.replace('_', ' ').title()}: {display(v)}" for k, v in row.items()))
+        show_details(self, "Meeting details", row)
 
     def attendance(self):
         from ui.attendance.attendance_screen import AttendanceScreen

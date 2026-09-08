@@ -9,7 +9,7 @@ class AdminList(Screen):
         self.button("Create administrator", self.create)
         self.button("Update access", self.update)
         self.button("Restart authenticator setup", self.reset)
-        self.grid = self.table(("username", "email", "role", "is_active", "totp_enabled", "last_login_at"))
+        self.grid = self.table(("username", "email", "phone_number", "role", "is_active", "totp_enabled", "last_login_at"))
         app.run(app.services["admins"].list, self.grid.set_rows)
 
     def create(self):

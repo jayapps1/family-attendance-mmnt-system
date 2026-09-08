@@ -64,3 +64,5 @@ if not DB_PASSWORD:
     raise RuntimeError(
         "DB_PASSWORD is missing from the .env file."
     )
+# Google Drive for desktop sync destination (configured on this computer).
+GOOGLE_DRIVE_BACKUP_DIR = os.getenv("GOOGLE_DRIVE_BACKUP_DIR", "")

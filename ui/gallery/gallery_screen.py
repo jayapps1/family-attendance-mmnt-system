@@ -10,7 +10,11 @@ class GalleryScreen(Screen):
         self.button("Open album", self.load_items)
         self.button("Upload file", self.upload)
         self.button("View file", self.view)
-        self.albums = self.table(("title", "event_date", "location", "description"))
+        from ui.gallery.album_cards import AlbumCards
+        from tkinter import ttk
+        self.albums = AlbumCards(self, app, self.load_items)
+        self.albums.pack(fill="both", expand=True, pady=(0, 16))
+        ttk.Label(self, text="Album files", style="Page.TLabel", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(0, 10))
         self.items = self.table(("title", "file_path", "uploaded_at"))
         app.run(app.services["gallery"].albums, self.albums.set_rows)
 

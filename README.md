@@ -39,6 +39,27 @@ authenticator resets, settings and backups. Resetting enrollment invalidates
 previous recovery codes. An expired pending enrollment can be restarted by a
 super administrator. Initial setup can be resumed if it was interrupted.
 
+## Seed the first super administrator
+
+Run the explicit seeder after applying migrations:
+
+```powershell
+.\.venv\Scripts\python.exe seed_super_admin.py
+```
+
+The default seed is username `nanagyachie`, email `nanagyachie@gmail.com`, and
+contact phone `0542011738`. The phone number is not a password or login code.
+The seeder creates the initial `SUPER_ADMIN` only when the user table is empty.
+Re-running it for the same super administrator preserves enrollment, recovery
+codes, lockout and active state; it updates only the contact phone if changed.
+It will not overwrite a different account or silently promote an existing admin.
+Optional arguments: `--email`, `--phone`, and `--username`.
+
+Start the app and select **Set up first administrator** to enroll the seeded
+account. Its username and email are prefilled. Scan the authenticator QR code,
+verify a code, and save the one-use recovery codes. Subsequent sign-in accepts
+`nanagyachie` or `nanagyachie@gmail.com` plus an authenticator/recovery code.
+
 ## Workflows
 
 - **Family register:** search/filter, add/edit, archive/restore, upload profile
@@ -82,10 +103,28 @@ process environment, never a command-line argument.
 
 Daily/weekly/monthly backups run while a super administrator is signed in and
 the application is running. The schedule checks hourly; monthly means 30 days.
-This is not an operating-system background scheduler. No destructive restore
-operation is implemented. Backups should also be copied to your managed off-device
-storage. Concurrent media changes from another application instance are not an
-atomic snapshot with PostgreSQL.
+This is not an operating-system background scheduler. Set the Google Drive desktop
+folder in Settings to copy verified backups automatically, with manual retry for
+pending copies. Local backups are retained if Drive is offline. Cloud completion
+is shown by Google Drive for desktop's sync status. Concurrent media changes from
+another application instance are not an atomic snapshot with PostgreSQL.
+
+Super administrators can use **Restore latest backup** in Settings. The app checks
+local and configured Drive copies, validates checksums and the schema version,
+requires typing RESTORE, and creates a safety backup before replacing records.
+Other application/database windows must be closed. PostgreSQL restore runs in one
+transaction; backed-up media is staged and put back if the database step fails.
+Newer media not referenced by the restored database is retained, not deleted.
+The existing .env encryption key stays in place. Sign in again after restoration.
+An interrupted restore leaves a recovery journal and staged originals for review;
+do not discard them before recovery is verified.
+
+Member Add/Edit forms now provide **Upload / resize photo** with a square crop,
+zoom, horizontal/vertical positioning, rotation, and 256/512/1024-pixel output.
+The original image stays unchanged; the prepared JPEG is stored when the member
+is saved. Cancelling does not create a member photo file.
+
+See [photo and backup guide](docs/photos-backup-restore.md) for setup and recovery details.
 
 ## Validation
 
@@ -118,3 +157,19 @@ restore anything into the application database.
 Financial history and audit logs have no delete UI. Application permissions do
 not replace PostgreSQL account permissions; protect the database and local
 configuration using appropriate operating-system access controls.
+
+
+The optional `FAMILY_RUN_RESTORE_TESTS=1` check starts its own temporary PostgreSQL
+cluster on a loopback port, performs a real backup/restore round trip, and stops
+that test server. It never restores into the configured application database.
+It requires installed PostgreSQL server tools and permissions to start a local
+process. On Windows, run this test outside a restricted process sandbox.
+
+
+## Multi-generation genealogy and branches
+
+Member profiles now provide Add Child, Add Parent and Add Spouse actions.
+Use Family Branches to create founder-based lineages that automatically include
+biological descendants, and use the branch filter in Family Register.
+See [genealogy and branch guide](docs/genealogy-branches.md) for workflows,
+derivation rules, validation and service interfaces.

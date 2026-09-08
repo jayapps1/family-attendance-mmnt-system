@@ -7,7 +7,7 @@ from utils.validators import ValidationError
 class AdminService(Service):
     def list(self):
         with self.transaction() as session:
-            return [{"id": row.id, "username": row.username, "email": row.email,
+            return [{"id": row.id, "username": row.username, "email": row.email, "phone_number": row.phone_number,
                      "role": row.role.value, "is_active": row.is_active,
                      "totp_enabled": row.totp_enabled, "last_login_at": row.last_login_at}
                     for row in UserRepository(session).list()]

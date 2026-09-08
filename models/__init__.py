@@ -62,3 +62,7 @@ __all__ += ["GalleryAlbum", "GalleryItem", "FamilyHistory", "HistoryMedia", "Med
 from models.audit_log import AuditLog
 from models.application_setting import ApplicationSetting
 __all__ += ["AuditLog", "ApplicationSetting"]
+
+from models.family_member import FamilyAffiliationType
+from models.marriage_child import MarriageChild
+__all__ += ["FamilyAffiliationType", "MarriageChild"]

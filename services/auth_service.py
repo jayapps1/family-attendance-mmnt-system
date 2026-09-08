@@ -52,6 +52,14 @@ class AuthService:
             users = UserRepository(session).list()
             return not users or (len(users) == 1 and users[0].authenticator_verified_at is None and not users[0].totp_enabled)
 
+    def bootstrap_profile(self) -> dict:
+        """Return only contact fields for a resumable initial enrollment."""
+        with self.sessions() as session:
+            users = UserRepository(session).list()
+            if len(users) == 1 and users[0].authenticator_verified_at is None and not users[0].totp_enabled:
+                return {"username": users[0].username, "email": users[0].email}
+            return {}
+
     def prepare_setup(self, username, email=None, *, actor_id=None, role="ADMIN", reset_id=None):
         username = required(username, "Username", 100).lower()
         email = (email or "").strip().lower() or None

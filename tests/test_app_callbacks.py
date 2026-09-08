@@ -12,6 +12,7 @@ class Harness:
     def __init__(self):
         self.identity = SimpleNamespace(expired=lambda minutes: False)
         self.generation = 1
+        self.maintenance = False
         self.timeout_minutes = 30
         self.pending = []
         self.future = Future()
@@ -45,3 +46,10 @@ def test_screen_callback_does_not_update_another_screen():
     app.future.set_result('old screen data')
     app.poll()
     assert not results
+
+
+def test_restore_maintenance_blocks_new_work():
+    app = Harness()
+    app.maintenance = True
+    app.run(lambda: None)
+    assert not app.pending

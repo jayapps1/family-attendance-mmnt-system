@@ -32,11 +32,12 @@ class ReportService(Service):
         super().__init__(sessions, actor_id)
         self.output_root = Path(output_root)
 
-    def data(self, name, *, member_id=None, period_id=None):
+    def data(self, name, *, member_id=None, period_id=None, affiliation_type=None):
         if name not in self.REPORTS:
             raise ValidationError("Unknown report")
         family = FamilyService(self.sessions, self.actor_id)
         members = {row["id"]: row for row in family.list()}
+        from utils.family_labels import affiliation_label
         names = {i: f'{r["family_number"]} - {r["first_name"]} {r["last_name"]}' for i, r in members.items()}
         if name in {"Family register", "Individual member", "Family branch"}:
             rows = list(members.values())
@@ -50,7 +51,22 @@ class ReportService(Service):
                 tree = RelationshipService(self.sessions, self.actor_id).tree(member_id)
                 ids = {member_id} | {r["id"] for r in tree["descendants"]}
                 rows = [r for r in rows if r["id"] in ids]
-            columns = ("family_number", "first_name", "last_name", "sex", "age", "phone_number", "current_residence", "living_status")
+            from models import FamilyBranch
+            from repositories.base import Repository
+            links = RelationshipService(self.sessions, self.actor_id)
+            with links.transaction() as session:
+                graph = links.graph(session)
+                branches = Repository(session, FamilyBranch).list()
+                enriched = []
+                for r in rows:
+                    if affiliation_type is not None and r['affiliation_type'] != affiliation_type:
+                        continue
+                    ancestors = {r['id']} | set(graph.depths(r['id'], ancestors=True))
+                    enriched.append(dict(r, affiliation=affiliation_label(r['affiliation_type']),
+                        birth_position=graph.members[r['id']].get('birth_position', ''),
+                        branch='; '.join(b.name for b in branches if b.founding_member_id in ancestors)))
+                rows = enriched
+            columns = ("family_number", "first_name", "last_name", "affiliation", "birth_position", "branch", "sex", "age", "phone_number", "current_residence", "living_status")
         elif name == "Genealogy":
             rows = RelationshipService(self.sessions, self.actor_id).list()
             rows = [dict(parent=names.get(r["parent_id"], ""), child=names.get(r["child_id"], ""),
@@ -70,7 +86,7 @@ class ReportService(Service):
         elif name == "Contribution summary":
             contributions = ContributionService(self.sessions, self.actor_id)
             periods = contributions.periods()
-            rows = [dict(period=p["title"], **contributions.summary(p["id"])) for p in periods
+            rows = [dict(period=p["title"], **contributions.summary(p["id"], affiliation_type)) for p in periods
                     if period_id is None or p["id"] == period_id]
             columns = ("period", "expected_total", "collected", "outstanding", "PAID", "PARTIALLY_PAID", "UNPAID")
         elif name == "Payment transaction history":
@@ -79,7 +95,8 @@ class ReportService(Service):
                 obligations = {r.id: r for r in repo.list()}
                 payments = repo.payments.list()
                 rows = [dict(snapshot(p), member=names.get(obligations[p.member_contribution_id].family_member_id, ""))
-                        for p in payments if period_id is None or obligations[p.member_contribution_id].contribution_period_id == period_id]
+                        for p in payments if (period_id is None or obligations[p.member_contribution_id].contribution_period_id == period_id)
+                        and (affiliation_type is None or members[obligations[p.member_contribution_id].family_member_id]['affiliation_type'] == affiliation_type)]
             columns = ("receipt_number", "member", "payment_date", "amount_paid", "payment_method", "is_reversed", "reversal_reason")
         else:
             contributions = ContributionService(self.sessions, self.actor_id)
@@ -87,12 +104,13 @@ class ReportService(Service):
                 raise ValidationError("Select a member")
             status = {"Fully paid members": "PAID", "Partially paid members": "PARTIALLY_PAID",
                       "Unpaid members": "UNPAID"}.get(name)
-            rows = contributions.obligations(period_id, member_id if name == "Individual contribution history" else None, status)
+            rows = contributions.obligations(period_id, member_id if name == "Individual contribution history" else None, status, affiliation_type)
             periods = {p["id"]: p["title"] for p in contributions.periods()}
             rows = [dict(r, member=names.get(r["family_member_id"], ""), period=periods.get(r["contribution_period_id"], "")) for r in rows]
             if name == "Outstanding balances":
                 rows = [r for r in rows if r["outstanding"] > 0]
-            columns = ("member", "period", "amount_due", "total_paid", "outstanding", "status")
+            rows = [dict(r, affiliation=affiliation_label(r["affiliation_type"])) for r in rows]
+            columns = ("member", "affiliation", "period", "amount_due", "total_paid", "outstanding", "status")
         return columns, rows
 
     def export(self, name, format, **filters):

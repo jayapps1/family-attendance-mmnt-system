@@ -1,13 +1,16 @@
 """One Tk root, one background work queue, and service-backed navigation."""
 from concurrent.futures import ThreadPoolExecutor
 import logging
+import os
+from datetime import date
 import tkinter as tk
 from tkinter import ttk, messagebox
 from sqlalchemy.exc import SQLAlchemyError
-from config.settings import BASE_DIR, MEDIA_ROOT, BACKUP_ROOT, SESSION_TIMEOUT_MINUTES
+from config.settings import BASE_DIR, MEDIA_ROOT, BACKUP_ROOT, SESSION_TIMEOUT_MINUTES, GOOGLE_DRIVE_BACKUP_DIR
 from config.database import SessionLocal, DATABASE_URL
 from services.auth_service import AuthService
 from services.family_service import FamilyService
+from services.branch_service import BranchService
 from services.relationship_service import RelationshipService
 from services.meeting_service import MeetingService
 from services.attendance_service import AttendanceService
@@ -20,6 +23,7 @@ from services.settings_service import SettingsService
 from services.report_service import ReportService
 from services.backup_service import BackupService
 from utils.security import encryption_box
+from ui.theme import apply_theme, COLORS, FONTS, StatusBadge, ScrollArea
 
 
 class Application(tk.Tk):
@@ -31,20 +35,29 @@ class Application(tk.Tk):
         self.media_root = MEDIA_ROOT
         self.identity, self.screen, self.screen_factory = None, None, None
         self.services, self.generation, self.pending = {}, 0, []
+        self.maintenance = False
         self.timeout_minutes = SESSION_TIMEOUT_MINUTES
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="family-work")
         self.auth = AuthService(SessionLocal, lambda create=False: encryption_box(BASE_DIR / ".env", allow_create=create))
-        style = ttk.Style(self)
-        style.theme_use("clam")
-        style.configure(".", font=("Segoe UI", 10))
-        style.configure("Treeview", rowheight=28)
-        style.configure("TButton", padding=(10, 6))
-        self.sidebar = ttk.Frame(self, padding=12, width=200)
-        self.sidebar.pack(side="left", fill="y")
+        self.theme = apply_theme(self)
+        self.minsize(1100, 760)
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(1, weight=1)
+        self.sidebar = ttk.Frame(self, style="Sidebar.TFrame", padding=(16, 18), width=236)
+        self.sidebar.grid(row=0, column=0, rowspan=3, sticky="nsew")
+        self.sidebar.pack_propagate(False)
+        self.header = ttk.Frame(self, style="Header.TFrame", padding=(24, 18))
+        self.header.grid(row=0, column=1, sticky="ew")
+        self.page_title = tk.StringVar(value="Welcome")
+        ttk.Label(self.header, textvariable=self.page_title, style="Header.TLabel").pack(side="left")
+        self.header_user = ttk.Label(self.header, text="", style="HeaderHelper.TLabel")
+        self.header_user.pack(side="right")
+        ttk.Label(self.header, text=date.today().strftime("%d %B %Y"), style="HeaderHelper.TLabel").pack(side="right", padx=24)
         self.content = ttk.Frame(self)
-        self.content.pack(side="top", fill="both", expand=True)
+        self.content.grid(row=1, column=1, sticky="nsew")
         self.status = tk.StringVar(value="Starting...")
-        ttk.Label(self, textvariable=self.status, padding=8).pack(side="bottom", fill="x")
+        ttk.Label(self, textvariable=self.status, padding=(24, 8), style="Subtitle.TLabel").grid(row=2, column=1, sticky="ew")
+        self.nav_buttons = {}
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.bind_all("<KeyPress>", self.activity, add="+")
         self.bind_all("<ButtonPress>", self.activity, add="+")
@@ -55,24 +68,37 @@ class Application(tk.Tk):
     def show_login(self):
         from ui.auth.login_window import LoginView
         self.identity = None
+        self.sidebar.grid_remove()
+        self.header.grid_remove()
+        self.page_title.set("Welcome")
         for widget in self.sidebar.winfo_children():
             widget.destroy()
         self.show(lambda app: ttk.Label(app.content, text="Checking administrator setup...", padding=30))
         self.run(self.auth.needs_bootstrap, lambda needed: self.show(lambda app: LoginView(app, needed)))
 
     def show(self, factory):
+        if self.maintenance:
+            return
         self.generation += 1
         if self.screen is not None:
             self.screen.destroy()
         self.screen_factory = factory
         self.screen = factory(self)
         self.screen.pack(fill="both", expand=True)
+        section = self.screen.__class__.__module__.split(".")
+        section = section[1] if len(section) > 1 else ""
+        section = {"BranchScreen": "branches", "FamilyTreeScreen": "tree"}.get(self.screen.__class__.__name__, section)
+        for key, button in self.nav_buttons.items():
+            if button.winfo_exists():
+                button.configure(style="Selected.Nav.TButton" if key == section else "Nav.TButton")
 
     def refresh(self):
         if self.screen_factory:
             self.show(self.screen_factory)
 
     def run(self, work, success=None, failure=None, *, session_wide=False):
+        if self.maintenance:
+            return
         if self.identity and self.identity.expired(self.timeout_minutes):
             self.logout()
             return
@@ -115,16 +141,18 @@ class Application(tk.Tk):
         self.identity = identity
         context = (SessionLocal, identity.user_id)
         self.services = {
-            "family": FamilyService(*context), "relationships": RelationshipService(*context),
+            "family": FamilyService(*context), "branches": BranchService(*context), "relationships": RelationshipService(*context),
             "meetings": MeetingService(*context), "attendance": AttendanceService(*context),
             "contributions": ContributionService(*context), "gallery": GalleryService(*context, MEDIA_ROOT),
             "history": HistoryService(*context, MEDIA_ROOT), "admins": AdminService(*context),
             "audit": AuditService(*context), "settings": SettingsService(*context),
             "reports": ReportService(*context, BASE_DIR / "reports"),
-            "backup": BackupService(*context, DATABASE_URL, MEDIA_ROOT, BACKUP_ROOT),
+            "backup": BackupService(*context, DATABASE_URL, MEDIA_ROOT, BACKUP_ROOT, drive_folder=os.getenv("GOOGLE_DRIVE_BACKUP_DIR", "")),
         }
         from ui.dashboard.dashboard import Dashboard
         from ui.family.family_register import FamilyRegister
+        from ui.family.branch_screen import BranchScreen
+        from ui.family.family_tree import FamilyTreeScreen
         from ui.meetings.meeting_list import MeetingList
         from ui.attendance.attendance_screen import AttendanceScreen
         from ui.contributions.contribution_dashboard import ContributionDashboard
@@ -136,14 +164,31 @@ class Application(tk.Tk):
         from ui.settings.settings_screen import SettingsScreen
         for widget in self.sidebar.winfo_children():
             widget.destroy()
-        ttk.Label(self.sidebar, text="FAMILY\nMANAGEMENT", font=("Segoe UI", 15, "bold")).pack(pady=(8, 24))
-        ttk.Label(self.sidebar, text=identity.username).pack(pady=(0, 16))
-        for label, screen in [("Dashboard", Dashboard), ("Family register", FamilyRegister), ("Meetings", MeetingList),
-                              ("Attendance", AttendanceScreen), ("Contributions", ContributionDashboard),
-                              ("Gallery", GalleryScreen), ("Family history", HistoryScreen), ("Reports", ReportsScreen),
-                              ("Administrators", AdminList), ("Audit log", AuditScreen), ("Settings / backup", SettingsScreen)]:
-            ttk.Button(self.sidebar, text=label, command=lambda cls=screen: self.show(cls)).pack(fill="x", pady=3)
-        ttk.Button(self.sidebar, text="Sign out", command=self.logout).pack(fill="x", pady=20)
+        self.sidebar.grid()
+        self.header.grid()
+        self.header_user.configure(text=identity.username + "  |  " + identity.role.replace("_", " ").title())
+        self.nav_buttons = {}
+        tk.Frame(self.sidebar, background=COLORS["gold"], height=3, width=36).pack(anchor="w", pady=(0, 12))
+        ttk.Label(self.sidebar, text="Family\nManagement", style="Brand.TLabel").pack(anchor="w", pady=(0, 16))
+        footer = ttk.Frame(self.sidebar, style="Sidebar.TFrame")
+        footer.pack(side="bottom", fill="x", pady=(12, 0))
+        ttk.Label(footer, text=identity.username, style="Sidebar.TLabel").pack(anchor="w", pady=(0, 6))
+        StatusBadge(footer, identity.role).pack(anchor="w", pady=(0, 8))
+        ttk.Button(footer, text="Sign out", command=self.logout, style="Nav.TButton").pack(fill="x")
+        groups = [
+            ("OVERVIEW", [("Dashboard", Dashboard)]),
+            ("FAMILY RECORDS", [("Family register", FamilyRegister), ("Family tree", FamilyTreeScreen), ("Family branches", BranchScreen), ("Meetings", MeetingList), ("Attendance", AttendanceScreen)]),
+            ("COLLECTIONS", [("Contributions", ContributionDashboard), ("Gallery", GalleryScreen), ("Family history", HistoryScreen), ("Reports", ReportsScreen)]),
+            ("ADMINISTRATION", [("Administrators", AdminList), ("Audit log", AuditScreen), ("Settings / backup", SettingsScreen)]),
+        ]
+        navigation = ScrollArea(self.sidebar, sidebar=True)
+        navigation.pack(fill="both", expand=True)
+        for group, pages in groups:
+            ttk.Label(navigation.body, text=group, style="SidebarGroup.TLabel").pack(anchor="w", pady=(10, 5))
+            for label, screen in pages:
+                button = ttk.Button(navigation.body, text=label, style="Nav.TButton", command=lambda cls=screen: self.show(cls))
+                button.pack(fill="x", pady=2)
+                self.nav_buttons[{"BranchScreen": "branches", "FamilyTreeScreen": "tree"}.get(screen.__name__, screen.__module__.split(".")[1])] = button
         self.show(Dashboard)
         self.run(self.services["settings"].list, self.apply_settings, session_wide=True)
 
@@ -161,10 +206,12 @@ class Application(tk.Tk):
         if self.identity and self.identity.role == "SUPER_ADMIN":
             service, frequency = self.services["backup"], getattr(self, "backup_frequency", "MANUAL")
             if frequency != "MANUAL":
-                self.run(lambda: service.create() if service.due(frequency) else None)
+                self.run(lambda: service.scheduled(frequency))
         self.backup_timer = self.after(3600000, self.schedule_backup)
 
     def activity(self, event=None):
+        if self.maintenance:
+            return
         if self.identity:
             if self.identity.expired(self.timeout_minutes):
                 self.logout()
@@ -172,11 +219,13 @@ class Application(tk.Tk):
                 self.identity.touch()
 
     def check_timeout(self):
-        if self.identity and self.identity.expired(self.timeout_minutes):
+        if not self.maintenance and self.identity and self.identity.expired(self.timeout_minutes):
             self.logout()
         self.after(1000, self.check_timeout)
 
     def logout(self):
+        if self.maintenance:
+            return
         identity = self.identity
         if identity is None:
             return
@@ -194,6 +243,9 @@ class Application(tk.Tk):
         self.run(lambda: self.auth.logout(identity), lambda _: self.show_login(), self.show_login)
 
     def close(self):
+        if self.maintenance:
+            messagebox.showinfo("Restore in progress", "Please keep the app open until restore finishes.", parent=self)
+            return
         if any(not item[0].done() for item in self.pending):
             messagebox.showinfo("Work in progress", "Please wait for the current operation to finish.", parent=self)
             return

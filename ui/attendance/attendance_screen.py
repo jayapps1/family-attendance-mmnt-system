@@ -1,5 +1,5 @@
 from models import AttendanceStatus
-from ui.components import Screen, Field, FormDialog, enum_options, member_options, options
+from ui.components import Screen, Field, FormDialog, enum_options, member_options, options, show_details
 
 
 class AttendanceScreen(Screen):
@@ -37,4 +37,4 @@ class AttendanceScreen(Screen):
 
     def summary(self):
         self.app.run(lambda: self.app.services["attendance"].summary(meeting_id=self.meeting_id),
-                     lambda result: self.show_text("Attendance summary", "\n".join(f"{k}: {v}" for k, v in result.items())))
+                     lambda result: show_details(self, "Attendance summary", result, statistics=True))

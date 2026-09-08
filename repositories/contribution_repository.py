@@ -25,3 +25,10 @@ class ContributionRepository(Repository[MemberContribution]):
         return list(self.session.scalars(select(ContributionPayment).where(
             ContributionPayment.member_contribution_id == obligation_id
         ).order_by(ContributionPayment.payment_date, ContributionPayment.created_at)))
+
+    def annual_periods(self, year=None):
+        from models import ContributionFrequency
+        query = select(ContributionPeriod).join(ContributionType).where(ContributionType.frequency == ContributionFrequency.ANNUAL)
+        if year is not None:
+            query = query.where(ContributionPeriod.year == year)
+        return list(self.session.scalars(query.order_by(ContributionPeriod.year.desc().nulls_last(), ContributionPeriod.created_at.desc())))
