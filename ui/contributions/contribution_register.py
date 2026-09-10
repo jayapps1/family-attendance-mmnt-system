@@ -15,6 +15,13 @@ class ContributionRegister(Screen):
         self.button("Assign members", self.assign)
         self.pay_button = self.button("Record payment", lambda: payment_form(app, self.grid.selected()))
         self.button("Payment history", self.history)
+        self.button("Edit Member", self.edit_member)
+        from services.contribution_eligibility import LABELS
+        self.eligibility_options = {"All": None, **{label: code for code,label in LABELS.items()}}
+        self.eligibility = ttk.Combobox(self.toolbar, values=list(self.eligibility_options), state="readonly", width=29)
+        self.eligibility.set("Eligible")
+        self.eligibility.pack(side="left", padx=6)
+        self.eligibility.bind('<<ComboboxSelected>>', lambda e: self.render_rows())
         from ui.contributions.contribution_details import contribution_details
         self.button('View details', lambda: contribution_details(app, self.grid.selected()))
         self.affiliation = ttk.Combobox(self.toolbar, values=['All Members', *AFFILIATIONS], state='readonly', width=21)
@@ -31,7 +38,7 @@ class ContributionRegister(Screen):
             self.summary_cards[key] = summary_grid.add(StatCard(summary_grid, label, tone=tone))
         self.summary = ttk.Label(self, style="Subtitle.TLabel")
         self.summary.pack(anchor="w", pady=(0, 12))
-        self.grid = self.table(("family_number", "member", "amount_due", "total_paid", "outstanding", "status"))
+        self.grid = self.table(("family_number", "member", "age", "eligibility_label", "amount_due", "total_paid", "outstanding", "status", "action"))
         self.grid.tree.bind('<<TreeviewSelect>>',self.selection_changed,add='+')
         self.grid.tree.bind('<Double-1>',self.row_action)
         self.grid.tree.bind('<Return>',self.row_action)
@@ -41,18 +48,24 @@ class ContributionRegister(Screen):
     def row_action(self,event=None):
         if self.grid.tree.selection():
             row=self.grid.selected()
-            if row['outstanding'] == 0: self.history()
-            else: payment_form(self.app,row)
+            if row['can_pay']: payment_form(self.app,row)
+            elif row.get('id'): self.history()
+            else: self.edit_member()
 
     def selection_changed(self,event=None):
         if self.grid.tree.selection():
             row = self.grid.selected()
             self.pay_button.configure(state='normal' if row.get('can_pay',row['outstanding'] > 0) else 'disabled',
-                                      text='PAID IN FULL' if row['outstanding'] == 0 else 'Record payment')
+                                      text='Not eligible' if not row['eligible'] else 'PAID IN FULL' if row['outstanding'] == 0 else 'Record payment')
 
     def history(self):
         row = self.grid.selected()
         self.app.show(lambda app: PaymentHistory(app, row))
+
+    def edit_member(self):
+        from ui.family.member_form import member_form
+        selected = self.grid.selected()
+        member_form(self.app, next(r for r in self.members if r['id'] == selected['family_member_id']))
 
     def back(self):
         from ui.contributions.contribution_dashboard import ContributionDashboard
@@ -66,11 +79,14 @@ class ContributionRegister(Screen):
         self.render_rows()
 
     def render_rows(self):
+        self.pay_button.configure(state='disabled',text='Record payment')
         names = {v: k for k, v in member_options(self.members).items()}
         status = self.filter.get()
         affiliation = AFFILIATIONS.get(self.affiliation.get())
+        eligible = self.eligibility_options.get(self.eligibility.get())
         self.grid.set_rows([r for r in self.rows if (status == 'ALL' or r['status'] == status)
-                            and (affiliation is None or r['affiliation_type'] == affiliation)])
+                            and (affiliation is None or r['affiliation_type'] == affiliation)
+                            and (eligible is None or r['eligibility'] == eligible)])
 
     def assign(self):
         dialog = tk.Toplevel(self.app)
@@ -84,7 +100,8 @@ class ContributionRegister(Screen):
         table = TableView(dialog, ("family_number", "first_name", "last_name"), selectmode="extended")
         table.pack(fill="both", expand=True, padx=12)
         assigned = {r["family_member_id"] for r in self.rows if r.get("id")}
-        table.set_rows([r for r in self.members if r["is_active"] and r["living_status"] != "DECEASED" and r["id"] not in assigned])
+        eligible_ids = {r["family_member_id"] for r in self.rows if r["eligible"]}
+        table.set_rows([r for r in self.members if r["id"] in eligible_ids and r["id"] not in assigned])
         def submit():
             mode = eligibility.get()
             candidates = list(table.rows.values())

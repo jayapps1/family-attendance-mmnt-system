@@ -6,6 +6,8 @@ from ui.theme import COLORS, CardFrame, SectionCard, ScrollArea, StatusBadge, Re
 
 def show_profile(app, member, attendance, contributions, relationships=None, marriages=None, branches=None):
     dialog = tk.Toplevel(app)
+    from ui.navigation import dialog_navigation
+    dialog_navigation(dialog,app)
     dialog.title("Member profile")
     dialog.geometry("980x740")
     dialog.minsize(800, 580)
@@ -38,7 +40,9 @@ def show_profile(app, member, attendance, contributions, relationships=None, mar
                 photo = ImageTk.PhotoImage(source.copy())
             portrait.configure(image=photo, text="", width=100, height=100)
             portrait.image = photo
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            from utils.logger import log_exception
+            log_exception("Member portrait unavailable", exc)
             portrait.configure(text=initials)
         ttk.Button(information, text="View profile image", command=lambda: show_file(app, member["profile_image_path"]), style="GhostButton.TButton").pack(anchor="w", pady=(8, 0))
     actions = ttk.Frame(dialog)
@@ -117,13 +121,18 @@ def show_profile(app, member, attendance, contributions, relationships=None, mar
     grid.pack(fill="x")
     for key, value in attendance.items():
         grid.add(StatCard(grid, key.replace("_", " ").title(), display(value) + ("%" if "percentage" in key else ""), tone=status_tone(key.upper())))
-    finances = ttk.Frame(tabs)
-    tabs.add(finances, text="Contributions")
+    finances = page("Contributions")
     from ui.contributions.payment_form import quick_payment
     from ui.contributions.contribution_details import contribution_details
+    from services.contribution_eligibility import get_member_contribution_eligibility
+    eligibility = get_member_contribution_eligibility(member)
+    eligibility_card = SectionCard(finances, eligibility['eligibility_label'], eligibility['eligibility_message'])
+    eligibility_card.pack(fill='x', pady=8)
+    from ui.family.member_form import member_form
+    ttk.Button(eligibility_card.body, text='Edit Member', command=lambda:member_form(app,member,success=refreshed)).pack(anchor='w')
     financial_actions = ttk.Frame(finances)
     financial_actions.pack(fill='x', pady=8)
-    ttk.Button(financial_actions, text='Record Payment', style='PrimaryButton.TButton', command=lambda: quick_payment(app, member['id'], refreshed)).pack(side='left', padx=6)
+    ttk.Button(financial_actions, text='Record Payment', style='PrimaryButton.TButton', state='normal' if eligibility['eligible'] else 'disabled', command=lambda: quick_payment(app, member['id'], refreshed)).pack(side='left', padx=6)
     def view_contribution():
         from tkinter import messagebox
         try:
@@ -131,22 +140,24 @@ def show_profile(app, member, attendance, contributions, relationships=None, mar
         except ValueError as exc:
             messagebox.showinfo('Select contribution', str(exc), parent=dialog)
     ttk.Button(financial_actions, text='View details / payment history', command=view_contribution).pack(side='left', padx=6)
+    contributions = [r for r in contributions if r.get('id') or r.get('eligible')]
     if contributions:
         from datetime import date
         current = next((r for r in contributions if str(date.today().year) in r.get('period','')), contributions[0])
         contribution_card = SectionCard(finances, current['period'])
         contribution_card.pack(fill='x',pady=8)
         ttk.Label(contribution_card.body,text=f"Due GHS {current['amount_due']:,.2f} | Paid GHS {current['total_paid']:,.2f} | Balance GHS {current['outstanding']:,.2f}",style='Card.TLabel').pack(anchor='w')
-        StatusBadge(contribution_card.body,current['status']).pack(anchor='w',pady=4)
+        StatusBadge(contribution_card.body,current['status'] or 'No payments').pack(anchor='w',pady=4)
         from ui.contributions.payment_form import payment_form
-        ttk.Button(contribution_card.body,text='PAID IN FULL' if current['outstanding'] == 0 else 'Record Payment',
-                   state='disabled' if current['outstanding'] == 0 or current.get('period_status') != 'ACTIVE' else 'normal',
+        ttk.Button(contribution_card.body,text='Not eligible' if not current.get('eligible') else 'PAID IN FULL' if current['outstanding'] == 0 else 'Record Payment',
+                   state='normal' if current.get('can_pay') else 'disabled',
                    command=lambda:payment_form(app,current,refreshed)).pack(side='left',padx=4)
         def current_history():
             from ui.contributions.payment_history import PaymentHistory
-            dialog.destroy(); app.show(lambda a:PaymentHistory(a,current))
+            dialog.destroy(); app.show(lambda a:PaymentHistory(a,current,return_to=lambda:open_profile(app,member["id"])))
         ttk.Button(contribution_card.body,text='Payment History',command=current_history).pack(side='left',padx=4)
     table = TableView(finances, ("period", "amount_due", "total_paid", "outstanding", "status"))
+    table.tree.configure(height=5)
     table.pack(fill="both", expand=True)
     table.set_rows(contributions)
     tabs.select(1)

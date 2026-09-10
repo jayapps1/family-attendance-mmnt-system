@@ -26,10 +26,10 @@ def member_fields():
     return fields
 
 
-def member_form(app, member=None):
+def member_form(app, member=None, success=None):
     fields = member_fields()
     initial = member or {"marital_status": "SINGLE", "living_status": "LIVING", "affiliation_type": "LINEAGE_MEMBER"}
     service = app.services["family"]
     FormDialog(app, "Edit member" if member else "Add member", fields,
                lambda values: service.save_with_photo(values, app.media_root, identity=member["id"] if member else None),
-               initial=initial, save_label="Save member")
+               initial=initial, save_label="Save member", success=success)

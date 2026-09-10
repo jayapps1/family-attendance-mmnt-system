@@ -32,3 +32,14 @@ class ContributionRepository(Repository[MemberContribution]):
         if year is not None:
             query = query.where(ContributionPeriod.year == year)
         return list(self.session.scalars(query.order_by(ContributionPeriod.year.desc().nulls_last(), ContributionPeriod.created_at.desc())))
+
+    def transactions(self, period_id=None):
+        from models import FamilyMember
+        query = (select(ContributionPayment, MemberContribution, FamilyMember, ContributionPeriod, ContributionType)
+                 .join(MemberContribution, ContributionPayment.member_contribution_id == MemberContribution.id)
+                 .join(FamilyMember, MemberContribution.family_member_id == FamilyMember.id)
+                 .join(ContributionPeriod, MemberContribution.contribution_period_id == ContributionPeriod.id)
+                 .join(ContributionType, ContributionPeriod.contribution_type_id == ContributionType.id))
+        if period_id:
+            query = query.where(ContributionPeriod.id == period_id)
+        return self.session.execute(query.order_by(ContributionPayment.payment_date.desc(), ContributionPayment.created_at.desc(), ContributionPayment.id.desc())).all()

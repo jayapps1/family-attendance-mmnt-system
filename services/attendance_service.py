@@ -3,6 +3,7 @@ from models import Attendance, AttendanceStatus, MeetingStatus
 from repositories.attendance_repository import AttendanceRepository
 from repositories.meeting_repository import MeetingRepository
 from repositories.family_repository import FamilyRepository
+from repositories.user_repository import UserRepository
 from services.base import Service, snapshot
 from utils.validators import required, ValidationError
 
@@ -30,11 +31,15 @@ class AttendanceService(Service):
     def list(self, meeting_id=None):
         with self.transaction() as session:
             criteria = [Attendance.meeting_id == meeting_id] if meeting_id else []
-            return [snapshot(row) for row in AttendanceRepository(session).list(*criteria)]
+            names = UserRepository(session).names()
+            return [dict(snapshot(row), recorded_by_name=names.get(row.recorded_by, "Unknown"))
+                    for row in AttendanceRepository(session).list(*criteria)]
 
     def member_history(self, member_id):
         with self.transaction() as session:
-            return [dict(snapshot(row), meeting_title=meeting.title, meeting_date=meeting.meeting_date)
+            names = UserRepository(session).names()
+            return [dict(snapshot(row), recorded_by_name=names.get(row.recorded_by, "Unknown"),
+                         meeting_title=meeting.title, meeting_date=meeting.meeting_date)
                     for row, meeting in AttendanceRepository(session).history(member_id)]
 
     def summary(self, *, member_id=None, meeting_id=None):

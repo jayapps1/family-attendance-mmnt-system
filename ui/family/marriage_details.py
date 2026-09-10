@@ -106,6 +106,8 @@ def open_marriage(app, identity):
 def show_marriage(app, row):
     from ui.family.member_profile import open_profile
     dialog = tk.Toplevel(app)
+    from ui.navigation import dialog_navigation
+    dialog_navigation(dialog,app)
     dialog.title('Couple details')
     dialog.geometry('860x650')
     dialog.configure(background=COLORS['background'])

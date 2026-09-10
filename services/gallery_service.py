@@ -47,3 +47,13 @@ class GalleryService(Service):
             if relative:
                 self.files.discard_import(relative)
             raise
+
+    def delete_empty_album(self, identity):
+        from utils.validators import ValidationError
+        with self.transaction() as session:
+            repo = GalleryRepository(session)
+            row = repo.get(identity,lock=True)
+            if repo.items.list(GalleryItem.album_id == identity) or row.cover_image_path:
+                raise ValidationError('This album contains media and cannot be deleted. Its files and history will be preserved.')
+            self.audit(session,'DELETE_ALBUM',row,'Deleted empty album only')
+            session.delete(row)

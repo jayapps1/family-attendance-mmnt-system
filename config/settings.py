@@ -8,7 +8,8 @@ from dotenv import load_dotenv
 # PROJECT ROOT
 # ---------------------------------------------------------
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+from utils.runtime_paths import data_root
+BASE_DIR = data_root()
 
 
 # ---------------------------------------------------------
@@ -62,7 +63,7 @@ SESSION_TIMEOUT_MINUTES = int(
 
 if not DB_PASSWORD:
     raise RuntimeError(
-        "DB_PASSWORD is missing from the .env file."
+        f"DB_PASSWORD is missing. Configure {BASE_DIR / '.env'} before starting."
     )
 # Google Drive for desktop sync destination (configured on this computer).
 GOOGLE_DRIVE_BACKUP_DIR = os.getenv("GOOGLE_DRIVE_BACKUP_DIR", "")

@@ -86,9 +86,9 @@ class ReportService(Service):
         elif name == "Contribution summary":
             contributions = ContributionService(self.sessions, self.actor_id)
             periods = contributions.periods()
-            rows = [dict(period=p["title"], **contributions.summary(p["id"], affiliation_type)) for p in periods
+            rows = [dict(period=p["title"], **contributions.daily_summary(p["id"], affiliation_type)) for p in periods
                     if period_id is None or p["id"] == period_id]
-            columns = ("period", "expected_total", "collected", "outstanding", "PAID", "PARTIALLY_PAID", "UNPAID")
+            columns = ("period", "expected_total", "collected", "outstanding", "PAID", "PARTIALLY_PAID", "UNPAID", "eligible_contributors", "UNDER_23", "DECEASED", "DOB_UNKNOWN", "LIVING_UNKNOWN")
         elif name == "Payment transaction history":
             with self.transaction() as session:
                 repo = ContributionRepository(session)
@@ -104,7 +104,15 @@ class ReportService(Service):
                 raise ValidationError("Select a member")
             status = {"Fully paid members": "PAID", "Partially paid members": "PARTIALLY_PAID",
                       "Unpaid members": "UNPAID"}.get(name)
-            rows = contributions.obligations(period_id, member_id if name == "Individual contribution history" else None, status, affiliation_type)
+            if name == "Individual contribution history":
+                rows = contributions.obligations(period_id, member_id, status, affiliation_type)
+            else:
+                rows = [row for period in contributions.periods()
+                        if period_id is None or period["id"] == period_id
+                        for row in contributions.register_rows(period["id"])
+                        if (status is None or row["status"] == status)
+                        and (affiliation_type is None or row["affiliation_type"] == affiliation_type)
+                        and (row["historical"] or row["eligible"])]
             periods = {p["id"]: p["title"] for p in contributions.periods()}
             rows = [dict(r, member=names.get(r["family_member_id"], ""), period=periods.get(r["contribution_period_id"], "")) for r in rows]
             if name == "Outstanding balances":

@@ -36,6 +36,7 @@ class Application(tk.Tk):
         self.identity, self.screen, self.screen_factory = None, None, None
         self.services, self.generation, self.pending = {}, 0, []
         self.maintenance = False
+        self.navigation_history = []
         self.timeout_minutes = SESSION_TIMEOUT_MINUTES
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="family-work")
         self.auth = AuthService(SessionLocal, lambda create=False: encryption_box(BASE_DIR / ".env", allow_create=create))
@@ -68,6 +69,9 @@ class Application(tk.Tk):
     def show_login(self):
         from ui.auth.login_window import LoginView
         self.identity = None
+        self.services = {}
+        self.navigation_history.clear()
+        self.last_contribution_result = None
         self.sidebar.grid_remove()
         self.header.grid_remove()
         self.page_title.set("Welcome")
@@ -76,9 +80,12 @@ class Application(tk.Tk):
         self.show(lambda app: ttk.Label(app.content, text="Checking administrator setup...", padding=30))
         self.run(self.auth.needs_bootstrap, lambda needed: self.show(lambda app: LoginView(app, needed)))
 
-    def show(self, factory):
+    def show(self, factory, *, remember=True):
         if self.maintenance:
             return
+        if remember and self.identity and self.screen_factory and self.screen_factory != factory:
+            self.navigation_history.append(self.screen_factory)
+            self.navigation_history = self.navigation_history[-30:]
         self.generation += 1
         if self.screen is not None:
             self.screen.destroy()
@@ -92,9 +99,33 @@ class Application(tk.Tk):
             if button.winfo_exists():
                 button.configure(style="Selected.Nav.TButton" if key == section else "Nav.TButton")
 
+    def back(self):
+        if self.maintenance: return
+        if self.navigation_history:
+            self.show(self.navigation_history.pop(),remember=False)
+        else:
+            self.home()
+
+    def home(self):
+        if self.maintenance or not self.identity: return
+        for widget in self.winfo_children():
+            if isinstance(widget,tk.Toplevel): widget.destroy()
+        self.navigation_history.clear()
+        from ui.dashboard.dashboard import Dashboard
+        self.show(Dashboard,remember=False)
+
+    def request_logout(self):
+        if self.identity and messagebox.askyesno('Sign out','Sign out of the application?',parent=self):
+            self.logout()
+
+    def report_callback_exception(self, exception, value, tb):
+        from utils.logger import log_exception, friendly_error
+        log_exception('Tk callback failed',value,tb)
+        messagebox.showerror('Unable to complete action',friendly_error(value),parent=self)
+
     def refresh(self):
         if self.screen_factory:
-            self.show(self.screen_factory)
+            self.show(self.screen_factory, remember=False)
 
     def run(self, work, success=None, failure=None, *, session_wide=False):
         if self.maintenance:
@@ -126,9 +157,10 @@ class Application(tk.Tk):
                 if self.callback_is_current(generation) and success:
                     success(result)
             except Exception as exc:
-                logging.error("Operation failed (%s)", type(exc).__name__)
+                from utils.logger import log_exception, friendly_error
+                log_exception("Operation failed",exc)
                 if self.callback_is_current(generation):
-                    message = "Database operation failed. Check the connection and migrations." if isinstance(exc, SQLAlchemyError) else str(exc)
+                    message = friendly_error(exc)
                     messagebox.showerror("Unable to complete operation", message, parent=self)
                     if failure:
                         failure()
@@ -139,6 +171,8 @@ class Application(tk.Tk):
 
     def signed_in(self, identity):
         self.identity = identity
+        self.navigation_history.clear()
+        self.last_contribution_result = None
         context = (SessionLocal, identity.user_id)
         self.services = {
             "family": FamilyService(*context), "branches": BranchService(*context), "relationships": RelationshipService(*context),
@@ -174,7 +208,7 @@ class Application(tk.Tk):
         footer.pack(side="bottom", fill="x", pady=(12, 0))
         ttk.Label(footer, text=identity.username, style="Sidebar.TLabel").pack(anchor="w", pady=(0, 6))
         StatusBadge(footer, identity.role).pack(anchor="w", pady=(0, 8))
-        ttk.Button(footer, text="Sign out", command=self.logout, style="Nav.TButton").pack(fill="x")
+        ttk.Button(footer, text="Sign out", command=self.request_logout, style="Nav.TButton").pack(fill="x")
         groups = [
             ("OVERVIEW", [("Dashboard", Dashboard)]),
             ("FAMILY RECORDS", [("Family register", FamilyRegister), ("Family tree", FamilyTreeScreen), ("Family branches", BranchScreen), ("Meetings", MeetingList), ("Attendance", AttendanceScreen)]),
@@ -189,7 +223,7 @@ class Application(tk.Tk):
                 button = ttk.Button(navigation.body, text=label, style="Nav.TButton", command=lambda cls=screen: self.show(cls))
                 button.pack(fill="x", pady=2)
                 self.nav_buttons[{"BranchScreen": "branches", "FamilyTreeScreen": "tree"}.get(screen.__name__, screen.__module__.split(".")[1])] = button
-        self.show(Dashboard)
+        self.show(Dashboard,remember=False)
         self.run(self.services["settings"].list, self.apply_settings, session_wide=True)
 
     def apply_settings(self, rows):

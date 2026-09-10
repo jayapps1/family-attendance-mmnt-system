@@ -53,3 +53,14 @@ def test_restore_maintenance_blocks_new_work():
     app.maintenance = True
     app.run(lambda: None)
     assert not app.pending
+
+
+def test_error_logging_omits_exception_values(caplog):
+    from utils.logger import log_exception, friendly_error
+    from sqlalchemy.exc import OperationalError
+    error = OperationalError("SELECT secret", {"password": "private-value"}, Exception("private-value"))
+    log_exception("Database operation failed", error)
+    assert "OperationalError" in caplog.text
+    assert "private-value" not in caplog.text
+    assert "SELECT secret" not in caplog.text
+    assert "private-value" not in friendly_error(error)

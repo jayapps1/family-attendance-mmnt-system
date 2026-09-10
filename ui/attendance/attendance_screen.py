@@ -9,7 +9,7 @@ class AttendanceScreen(Screen):
         self.button("Record / update", self.record)
         self.button("Member history", self.history)
         self.button("Summary", self.summary)
-        self.grid = self.table(("member", "meeting", "status", "reason", "arrival_time", "remarks"))
+        self.grid = self.table(("member", "meeting", "status", "reason", "arrival_time", "remarks", "recorded_by_name"))
         app.run(lambda: (app.services["attendance"].list(meeting_id), app.services["family"].list(),
                          app.services["meetings"].list()), self.render)
 

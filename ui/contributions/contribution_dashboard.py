@@ -16,6 +16,10 @@ class ContributionDashboard(Screen):
         self.button("+ RECORD CONTRIBUTION", lambda: quick_payment(app), variant="Primary")
         self.button('Set annual amount', lambda: annual_setup(app))
         self.button("Open register", self.register)
+        from ui.contributions.contribution_periods import ContributionPeriods
+        from ui.contributions.recent_payments import RecentPayments
+        self.button("Contribution Periods",lambda:app.show(ContributionPeriods))
+        self.button("Recent Payments",lambda:app.show(RecentPayments))
         advanced = ttk.Menubutton(self.toolbar, text='Advanced setup')
         import tkinter as tk
         menu = tk.Menu(advanced, tearoff=False)
@@ -33,21 +37,28 @@ class ContributionDashboard(Screen):
                       style='Subtitle.TLabel',wraplength=1000).pack(anchor='w',pady=(0,8))
         self.summary_title = ttk.Label(self, text="Select a period to view its financial summary.", style="Subtitle.TLabel")
         self.summary_title.pack(anchor="w", pady=(0, 10))
-        cards = ResponsiveGrid(self, minimum=230, maximum=3)
-        cards.pack(fill="x", pady=(0, 8))
+        ttk.Label(self,text="Collected includes retained payments from members no longer eligible; their balances are excluded.",style="Subtitle.TLabel",wraplength=900).pack(anchor="w",pady=(0,8))
+        from ui.theme import ScrollArea
+        card_area=ScrollArea(self)
+        card_area.pack(fill="both",expand=True,pady=(0,8))
+        cards = ResponsiveGrid(card_area.body, minimum=210, maximum=3)
+        cards.pack(fill="x")
         self.summary_cards = {}
-        for key, label, tone in (("total_members", "Total members", "info"), ("collected", "Collected", "success"),
+        for key, label, tone in (("eligible_contributors", "Eligible contributors", "info"), ("collected", "Collected", "success"),
                                  ("outstanding", "Outstanding", "warning"), ("PAID", "Paid members", "success"),
-                                 ("PARTIALLY_PAID", "Partially paid", "warning"), ("UNPAID", "Unpaid", "danger")):
+                                 ("PARTIALLY_PAID", "Partially paid", "warning"), ("UNPAID", "Unpaid", "danger"),
+                                 ("UNDER_23", "Under 23", "info"), ("DECEASED", "Deceased", "info"), ("DOB_UNKNOWN", "DOB review required", "warning")):
             self.summary_cards[key] = cards.add(StatCard(cards, label, tone=tone))
-        tabs = ttk.Notebook(self)
+        tabs = ttk.Notebook(card_area.body)
         tabs.pack(fill='both', expand=True, pady=(8,0))
         periods_page, recent_page = ttk.Frame(tabs), ttk.Frame(tabs)
         tabs.add(periods_page, text='Contribution periods')
         tabs.add(recent_page, text='Recent payments')
         self.grid = TableView(periods_page, ("title", "year", "amount_per_member", "start_date", "due_date", "status"))
+        self.grid.tree.configure(height=5)
         self.grid.pack(fill='both', expand=True)
         self.recent = TableView(recent_page, ("member", "payment_date", "amount_paid", "payment_method", "is_reversed"))
+        self.recent.tree.configure(height=5)
         self.recent.pack(fill='both', expand=True)
         self.grid.tree.bind("<<TreeviewSelect>>", self.load_summary, add="+")
         app.run(lambda: (app.services["contributions"].types(), app.services["contributions"].periods()), self.render)
@@ -71,7 +82,7 @@ class ContributionDashboard(Screen):
         def render(summary):
             if self.grid.tree.selection() and self.grid.selected()["id"] == period["id"]:
                 for key, card in self.summary_cards.items():
-                    card.set(display(summary[key]))
+                    card.set(display(summary.get(key,0)))
         self.app.run(lambda: self.app.services["contributions"].daily_summary(period["id"]), render)
         self.app.run(lambda: self.app.services['contributions'].recent_payments(period['id']),
                      lambda rows: self.recent.set_rows(rows) if self.grid.tree.selection() and self.grid.selected()['id'] == period['id'] else None)

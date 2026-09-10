@@ -8,6 +8,7 @@ class AdminList(Screen):
         super().__init__(app, "Administrators")
         self.button("Create administrator", self.create)
         self.button("Update access", self.update)
+        self.button("Edit details",self.edit_details)
         self.button("Restart authenticator setup", self.reset)
         self.grid = self.table(("username", "email", "phone_number", "role", "is_active", "totp_enabled", "last_login_at"))
         app.run(app.services["admins"].list, self.grid.set_rows)
@@ -35,3 +36,8 @@ class AdminList(Screen):
             actor = self.app.identity.user_id
             self.app.run(lambda: self.app.auth.prepare_setup(row["username"], actor_id=actor, reset_id=row["id"]),
                          lambda ticket: show_setup(self.app, ticket))
+
+    def edit_details(self):
+        row=self.grid.selected()
+        FormDialog(self.app,'Administrator details',[Field('username','Username',required=True),Field('email','Email'),Field('phone_number','Phone')],
+                   lambda values:self.app.services['admins'].update_profile(row['id'],**values),initial=row)

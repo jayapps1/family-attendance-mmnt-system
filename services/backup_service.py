@@ -19,6 +19,23 @@ class BackupService(Service):
         self.drive_folder = Path(drive_folder) if drive_folder else None
         self.media_root, self.backup_root = Path(media_root).resolve(), Path(backup_root).resolve()
 
+    def authorize_configuration(self):
+        with self.transaction(super_admin=True):
+            pass
+
+    def configure_drive_folder(self, folder):
+        from config.settings import BASE_DIR
+        from dotenv import set_key
+        folder = Path(folder).resolve()
+        with self.transaction(super_admin=True) as session:
+            if not folder.is_dir():
+                raise ValueError("The selected folder is unavailable.")
+            set_key(str(BASE_DIR / ".env"), "GOOGLE_DRIVE_BACKUP_DIR", str(folder))
+            os.environ["GOOGLE_DRIVE_BACKUP_DIR"] = str(folder)
+            self.drive_folder = folder
+            append_audit(session, self.actor_id, "UPDATE_SETTINGS", "backup",
+                         description="Updated Google Drive desktop backup folder")
+
     @staticmethod
     def pg_dump():
         configured = os.getenv("PG_DUMP_PATH")
@@ -47,8 +64,10 @@ class BackupService(Service):
                    "--username", self.url.username, "--dbname", self.url.database, "--no-password",
                    "--format=custom", "--file", str(dump)]
         try:
-            result = subprocess.run(command, env=env, capture_output=True, timeout=600,
-                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            from utils.external_process import system_libraries
+            with system_libraries():
+                result = subprocess.run(command, env=env, capture_output=True, timeout=600,
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if result.returncode:
                 raise ValueError("pg_dump failed. Check client/server versions and database access.")
             manifest = {"created_at": datetime.now(timezone.utc).isoformat(), "files": {}}
@@ -164,8 +183,9 @@ class BackupService(Service):
         if self.drive_folder:
             try:
                 files += list(self.drive_folder.glob("family_*.zip"))
-            except OSError:
-                pass
+            except OSError as exc:
+                from utils.logger import log_exception
+                log_exception("Reading Google Drive backups; using local backups", exc)
         if not files:
             raise ValueError("No backups found locally or in the configured Google Drive folder.")
         # Generated names contain UTC timestamps, independent of download/copy times.

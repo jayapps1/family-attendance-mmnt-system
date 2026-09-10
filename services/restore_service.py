@@ -33,8 +33,10 @@ class RestoreService:
         env = os.environ.copy()
         env["PGPASSWORD"] = self.backup.url.password or ""
         env["PGOPTIONS"] = "-c lock_timeout=10000 -c statement_timeout=600000"
-        result = subprocess.run([str(restore), *args], env=env, capture_output=True, timeout=660,
-                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        from utils.external_process import system_libraries
+        with system_libraries():
+            result = subprocess.run([str(restore), *args], env=env, capture_output=True, timeout=660,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if result.returncode:
             raise ValueError("PostgreSQL could not complete the restore step. Check database access, other open applications and PostgreSQL client versions.")
         return result.stdout.decode("utf-8", errors="replace")
@@ -42,14 +44,14 @@ class RestoreService:
     def _check_dump(self, dump):
         from alembic.config import Config
         from alembic.script import ScriptDirectory
-        from config.settings import BASE_DIR
+        from utils.runtime_paths import resource_root
         contents = self._client(["--list", str(dump)])
         if "TABLE DATA public alembic_version" not in contents:
             raise ValueError("Backup has no application schema version.")
         sql = self._client(["--data-only", "--table=alembic_version", "--file=-", str(dump)])
         match = re.search(r"COPY [^\n]*alembic_version[^\n]* FROM stdin;\r?\n(.*?)\r?\n\\\.", sql, re.S)
         revisions = set(match.group(1).splitlines()) if match else set()
-        heads = set(ScriptDirectory.from_config(Config(str(BASE_DIR / "alembic.ini"))).get_heads())
+        heads = set(ScriptDirectory.from_config(Config(str(resource_root() / "alembic.ini"))).get_heads())
         if revisions != heads:
             raise ValueError("This backup uses a different database version. Restore it with its matching application version first.")
 
@@ -115,7 +117,9 @@ class RestoreService:
             if getattr(self.backup, "drive_folder", None):
                 try:
                     self.backup.sync_to_drive(safety)
-                except (OSError, ValueError):
+                except (OSError, ValueError) as exc:
+                    from utils.logger import log_exception
+                    log_exception("Restore completed with a recoverable issue", exc)
                     warnings.append("The safety backup is saved locally; its Google Drive copy is pending.")
             # create() opened a pooled connection; close it before pg_restore.
             self._quiet_database()
@@ -148,11 +152,15 @@ class RestoreService:
                     actor = session.get(User, self.backup.actor_id)
                     append_audit(session, actor.id if actor else None, "RESTORE_BACKUP", "backup",
                                  description="Restored " + path.name + "; safety backup " + Path(safety).name)
-            except Exception:
+            except Exception as exc:
+                from utils.logger import log_exception
+                log_exception("Restore completed with a recoverable issue", exc)
                 warnings.append("Restore succeeded, but its audit entry could not be saved.")
             try:
                 journal.unlink()
-            except OSError:
+            except OSError as exc:
+                from utils.logger import log_exception
+                log_exception("Restore completed with a recoverable issue", exc)
                 warnings.append("Restore succeeded; the restore recovery journal needs cleanup before another restore.")
             return dict(restored=str(path), safety_backup=safety, media_count=len(installed), warnings=warnings)
         except Exception:
@@ -170,5 +178,7 @@ class RestoreService:
             if (not journal_owned or not journal.exists()) and stage.is_relative_to(self.backup.media_root.parent):
                 try:
                     shutil.rmtree(stage)
-                except OSError:
+                except OSError as exc:
+                    from utils.logger import log_exception
+                    log_exception("Restore completed with a recoverable issue", exc)
                     warnings.append("Temporary restore files could not be removed; they are retained locally.")

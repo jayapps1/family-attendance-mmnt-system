@@ -43,7 +43,9 @@ class PhotoPicker(ttk.Frame):
                 image.thumbnail((110, 110))
                 self.preview.image = ImageTk.PhotoImage(image)
             self.preview.configure(image=self.preview.image, text="")
-        except (OSError, ValueError):
+        except (OSError, ValueError) as exc:
+            from utils.logger import log_exception
+            log_exception("Portrait preview unavailable", exc)
             self.preview.configure(image="", text="Photo unavailable")
 
     def choose(self):

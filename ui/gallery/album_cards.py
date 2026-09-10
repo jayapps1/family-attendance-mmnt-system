@@ -48,7 +48,9 @@ class AlbumCards(ScrollArea):
                     try:
                         with Image.open(FileManager(self.app.media_root).resolve(path)) as source:
                             return ImageOps.fit(source.convert("RGB"), (240, 130))
-                    except (OSError, ValueError):
+                    except (OSError, ValueError) as exc:
+                        from utils.logger import log_exception
+                        log_exception("Album cover unavailable", exc)
                         return None
                 def render(photo, label=image_label):
                     if photo is not None and label.winfo_exists():

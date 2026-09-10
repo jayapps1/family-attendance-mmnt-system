@@ -33,9 +33,9 @@ class FamilyService(Service):
             values["profile_image_path"] = relative_media_path(values["profile_image_path"])
         return values
 
-    def list(self, search="", active=None, branch_id=None, affiliation_type=None):
+    def list(self, search="", active=None, branch_id=None, affiliation_type=None, living_status=None):
         with self.transaction() as session:
-            rows = FamilyRepository(session).search(search, active, affiliation_type)
+            rows = FamilyRepository(session).search(search, active, affiliation_type, living_status)
             if branch_id is not None:
                 from services.relationship_service import RelationshipService
                 branch = Repository(session, FamilyBranch).get(branch_id)

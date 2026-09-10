@@ -1,6 +1,6 @@
 from utils.family_labels import AFFILIATIONS
 from tkinter import ttk, messagebox, filedialog
-from ui.components import Screen, Field, FormDialog, member_options
+from ui.components import Screen, Field, FormDialog, member_options, TableView
 from ui.family.member_form import member_form
 from ui.family.member_profile import show_profile, open_profile
 from ui.family.relationship_form import relationship_form, marriage_form
@@ -24,6 +24,9 @@ class FamilyRegister(Screen):
         self.affiliation.set('All Members')
         self.affiliation.pack(side='left', padx=6)
         self.affiliation.bind('<<ComboboxSelected>>', lambda e: self.load())
+        self.living = ttk.Combobox(self.toolbar,values=['All living states','LIVING','DECEASED','UNKNOWN'],state='readonly',width=18)
+        self.living.set('All living states'); self.living.pack(side='left',padx=6)
+        self.living.bind('<<ComboboxSelected>>',lambda e:self.load())
         self.button("Search", self.load)
         self.button("Add member", lambda: member_form(app))
         self.button("Edit", lambda: member_form(app, self.grid.selected()))
@@ -48,7 +51,8 @@ class FamilyRegister(Screen):
         active = {"All": None, "Active": True, "Archived": False}[self.active.get()]
         branch_id = self.branch_ids.get(self.branch.get())
         affiliation = AFFILIATIONS.get(self.affiliation.get())
-        self.app.run(lambda: self.app.services["family"].list(search, active, branch_id=branch_id, affiliation_type=affiliation), self.grid.set_rows)
+        living_status = None if self.living.get() == "All living states" else self.living.get()
+        self.app.run(lambda: self.app.services["family"].list(search, active, branch_id=branch_id, affiliation_type=affiliation, living_status=living_status), self.grid.set_rows)
 
     def archive(self):
         row = self.grid.selected()
@@ -91,8 +95,13 @@ class RelationshipScreen(Screen):
         self.button("Delete marriage", lambda: delete_marriage(app, self.marriages.selected()), variant="Danger")
         self.button("Add branch", self.branch)
         self.button("Remove relationship", self.remove, variant="Danger")
-        self.relationships = self.table(("parent", "child", "relationship_type"))
-        self.marriages = self.table(("couple_name", "status", "marriage_date", "child_count"))
+        panes = ttk.Panedwindow(self, orient="vertical")
+        panes.pack(fill="both", expand=True)
+        self.relationships = TableView(panes, ("parent", "child", "relationship_type"))
+        self.marriages = TableView(panes, ("couple_name", "status", "marriage_date", "child_count"))
+        for table in (self.relationships, self.marriages):
+            table.tree.configure(height=4)
+            panes.add(table, weight=1)
         app.run(lambda: (app.services["family"].list(), app.services["relationships"].list(),
                          app.services["relationships"].marriages()), self.render)
 

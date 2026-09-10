@@ -1,3 +1,4 @@
+from datetime import date
 from pathlib import Path
 from decimal import Decimal
 from unittest.mock import patch
@@ -15,7 +16,7 @@ from utils.file_manager import FileManager, relative_media_path
 
 def test_pdf_excel_and_formula_safety(db, tmp_path):
     context = service_context(db)
-    FamilyService(*context).create(first_name="=1+1", last_name="Export", sex="FEMALE")
+    FamilyService(*context).create(first_name="=1+1", last_name="Export", sex="FEMALE", date_of_birth=date(1990, 1, 1))
     reports = ReportService(*context, tmp_path)
     pdf = Path(reports.export("Family register", "PDF"))
     excel = Path(reports.export("Family register", "Excel"))
@@ -81,7 +82,7 @@ def test_backup_manifest_and_failed_dump_cleanup(db, tmp_path):
 def test_all_report_routes(db, tmp_path, name, format):
     from services.contribution_service import ContributionService
     context = service_context(db)
-    member = FamilyService(*context).create(first_name="Report", last_name="Coverage", sex="MALE")
+    member = FamilyService(*context).create(first_name="Report", last_name="Coverage", sex="MALE", date_of_birth=date(1990, 1, 1))
     finance = ContributionService(*context)
     kind = finance.create_type("Reports " + str(member["id"]), "ANNUAL")
     period = finance.create_period(kind["id"], "Report period", "10")

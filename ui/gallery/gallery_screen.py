@@ -1,5 +1,5 @@
 from tkinter import filedialog
-from ui.components import Screen, Field, FormDialog
+from ui.components import Screen, Field, FormDialog, TableView
 
 
 class GalleryScreen(Screen):
@@ -8,14 +8,22 @@ class GalleryScreen(Screen):
         self.button("Add album", self.album)
         self.button("Edit album", lambda: self.album(self.albums.selected()))
         self.button("Open album", self.load_items)
+        self.button("Delete empty album",self.delete,variant="Danger")
         self.button("Upload file", self.upload)
         self.button("View file", self.view)
         from ui.gallery.album_cards import AlbumCards
         from tkinter import ttk
-        self.albums = AlbumCards(self, app, self.load_items)
-        self.albums.pack(fill="both", expand=True, pady=(0, 16))
-        ttk.Label(self, text="Album files", style="Page.TLabel", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(0, 10))
-        self.items = self.table(("title", "file_path", "uploaded_at"))
+        panes = ttk.Panedwindow(self, orient="vertical")
+        panes.pack(fill="both", expand=True)
+        self.albums = AlbumCards(panes, app, self.load_items)
+        self.albums.canvas.configure(height=200)
+        panes.add(self.albums, weight=1)
+        files = ttk.Frame(panes)
+        panes.add(files, weight=1)
+        ttk.Label(files, text="Album files", style="Page.TLabel", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(8, 10))
+        self.items = TableView(files, ("title", "file_path", "uploaded_at"))
+        self.items.tree.configure(height=3)
+        self.items.pack(fill="both", expand=True)
         app.run(app.services["gallery"].albums, self.albums.set_rows)
 
     def album(self, row=None):
@@ -40,3 +48,9 @@ class GalleryScreen(Screen):
     def view(self):
         from ui.gallery.photo_viewer import show_file
         show_file(self.app, self.items.selected()["file_path"])
+
+    def delete(self):
+        from tkinter import messagebox
+        row=self.albums.selected()
+        if messagebox.askyesno('Delete empty album','Delete "'+row['title']+'"? Only an empty album can be deleted; media files are preserved.',parent=self):
+            self.app.run(lambda:self.app.services['gallery'].delete_empty_album(row['id']),lambda _:self.app.refresh())

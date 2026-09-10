@@ -12,6 +12,7 @@ from utils.validators import money, required, dates, ValidationError
 
 
 from services.simple_contribution import SimpleContributionMixin
+from services.contribution_eligibility import require_eligible, historical_period
 
 
 class ContributionService(SimpleContributionMixin, Service):
@@ -40,7 +41,7 @@ class ContributionService(SimpleContributionMixin, Service):
     def periods(self):
         with self.transaction() as session:
             repo = ContributionRepository(session)
-            return [dict(snapshot(row), frequency=repo.types.get(row.contribution_type_id).frequency.value) for row in repo.periods.list()]
+            return [dict(snapshot(row), frequency=repo.types.get(row.contribution_type_id).frequency.value) for row in sorted(repo.periods.list(), key=lambda p:(p.year or 0,p.created_at,str(p.id)), reverse=True)]
 
     def create_period(self, contribution_type_id, title, amount_per_member, year=None,
                       start_date=None, due_date=None, description=None):
@@ -71,7 +72,7 @@ class ContributionService(SimpleContributionMixin, Service):
             return snapshot(row)
 
     def assign_members(self, period_id, member_ids):
-        """Explicit member selection defines eligibility; archived/deceased members are excluded."""
+        """Assignment and all payment paths enforce the centralized eligibility rule."""
         with self.transaction() as session:
             repo = ContributionRepository(session)
             period = repo.periods.get(period_id, lock=True)
@@ -79,9 +80,8 @@ class ContributionService(SimpleContributionMixin, Service):
                 raise ValidationError("Period is closed")
             created = []
             for member_id in dict.fromkeys(member_ids):
-                member = FamilyRepository(session).get(member_id)
-                if not member.is_active or member.living_status is LivingStatus.DECEASED:
-                    raise ValidationError("Only active, non-deceased members can be assigned")
+                member = FamilyRepository(session).get(member_id, lock=True)
+                require_eligible(member)
                 if repo.find(period_id, member_id):
                     continue
                 row = repo.add(MemberContribution(
@@ -103,6 +103,7 @@ class ContributionService(SimpleContributionMixin, Service):
             row = repo.get(obligation_id, lock=True)
             if period.status is not ContributionPeriodStatus.ACTIVE:
                 raise ValidationError("Payments require an active period")
+            require_eligible(FamilyRepository(session).get(row.family_member_id, lock=True))
             from sqlalchemy import select
             if session.scalar(select(ContributionPayment.id).where(ContributionPayment.receipt_number == receipt)):
                 raise ValidationError('This receipt has already been recorded. Check payment history before recording another payment.')
@@ -153,22 +154,18 @@ class ContributionService(SimpleContributionMixin, Service):
                     continue
                 period = repo.periods.get(row.contribution_period_id)
                 kind = repo.types.get(period.contribution_type_id)
-                rows.append(dict(snapshot(row), **self.balance(repo, row),
-                    member=' '.join(filter(None, (member.first_name, member.middle_name, member.last_name))),
-                    family_number=member.family_number, affiliation_type=member.affiliation_type.value,
-                    period=period.title, period_status=period.status.value, contribution=kind.name))
+                rows.append(dict(snapshot(row), **self._preview(session, period, member)))
             return [row for row in rows if status is None or row["status"] == status]
 
     def payment_history(self, obligation_id):
         with self.transaction() as session:
-            return [snapshot(row) for row in ContributionRepository(session).payment_history(obligation_id)]
+            from repositories.user_repository import UserRepository
+            names = UserRepository(session).names()
+            return [dict(snapshot(row), recorded_by_name=names.get(row.recorded_by, "Unknown"))
+                    for row in ContributionRepository(session).payment_history(obligation_id)]
 
     def summary(self, period_id, affiliation_type=None):
-        rows = self.obligations(period_id=period_id, affiliation_type=affiliation_type)
-        return {"expected_total": sum((r["amount_due"] for r in rows), Decimal("0")),
-                "collected": sum((r["total_paid"] for r in rows), Decimal("0")),
-                "outstanding": sum((r["outstanding"] for r in rows), Decimal("0")),
-                **{s.value: sum(r["status"] == s.value for r in rows) for s in ContributionStatus}}
+        return self.daily_summary(period_id, affiliation_type)
 
     def get_obligation(self, obligation_id):
         with self.transaction() as session:
@@ -176,17 +173,56 @@ class ContributionService(SimpleContributionMixin, Service):
             period_id, member_id = row.contribution_period_id, row.family_member_id
         return next(r for r in self.obligations(period_id, member_id) if r['id'] == obligation_id)
 
-    def recent_payments(self, period_id=None, limit=10):
-        from sqlalchemy import select
+    def recent_payments(self, period_id=None, limit=10, search="", method=None, status=None, payment_date=None):
+        from repositories.user_repository import UserRepository
         with self.transaction() as session:
-            query = select(ContributionPayment).join(MemberContribution,
-                ContributionPayment.member_contribution_id == MemberContribution.id)
-            if period_id:
-                query = query.where(MemberContribution.contribution_period_id == period_id)
+            names = UserRepository(session).names()
             result = []
+            for payment, obligation, member, period, kind in ContributionRepository(session).transactions(period_id):
+                label = " ".join(filter(None, (member.first_name, member.middle_name, member.last_name)))
+                if search.casefold().strip() not in (label + " " + member.family_number + " " + (payment.receipt_number or "") + " " + (payment.reference or "")).casefold():
+                    continue
+                state = "REVERSED" if payment.is_reversed else "VALID"
+                if method and payment.payment_method.value != method or status and state != status:
+                    continue
+                if payment_date and payment.payment_date != payment_date:
+                    continue
+                result.append(dict(snapshot(payment), member=label, family_number=member.family_number,
+                    contribution=kind.name, period=period.title, contribution_period_id=period.id,
+                    family_member_id=member.id, recorded_by_name=names.get(payment.recorded_by, "Unknown"),
+                    received_by_name=names.get(payment.received_by, "Unknown"), reversed_by_name=names.get(payment.reversed_by, ""),
+                    payment_status=state, action="View / Reverse" if not payment.is_reversed else "View"))
+            return result if limit is None else result[:limit]
+
+    def payment_summary(self, period_id=None):
+        rows = [r for r in self.recent_payments(limit=None) if not r["is_reversed"]]
+        today = date.today()
+        daily = [r for r in rows if r["payment_date"] == today]
+        monthly = [r for r in rows if (r["payment_date"].year, r["payment_date"].month) == (today.year, today.month)]
+        current = [r for r in rows if period_id and r["contribution_period_id"] == period_id]
+        total = lambda entries: sum((r["amount_paid"] for r in entries), Decimal("0.00"))
+        return dict(payments_today=len(daily), collected_today=total(daily), payments_month=len(monthly),
+                    collected_month=total(monthly), current_collected=total(current))
+
+    def period_overview(self):
+        return [dict(period, **self.daily_summary(period["id"])) for period in self.periods()]
+
+    def update_period(self, identity, contribution_type_id, title, amount_per_member, year=None,
+                      start_date=None, due_date=None, description=None):
+        dates(start_date, due_date)
+        amount = money(amount_per_member)
+        with self.transaction() as session:
             repo = ContributionRepository(session)
-            for payment in session.scalars(query.order_by(ContributionPayment.created_at.desc()).limit(limit)):
-                obligation = repo.get(payment.member_contribution_id)
-                member = FamilyRepository(session).get(obligation.family_member_id)
-                result.append(dict(snapshot(payment), member=member.first_name + ' ' + member.last_name))
-            return result
+            row = repo.periods.get(identity, lock=True)
+            if row.status is ContributionPeriodStatus.CLOSED:
+                raise ValidationError("Closed periods cannot be edited.")
+            from models import MemberContribution
+            if repo.list(MemberContribution.contribution_period_id == identity) and (
+                    row.amount_per_member != amount or row.contribution_type_id != contribution_type_id or row.year != year):
+                raise ValidationError("Amount, type and year cannot change after obligations exist. Create a new period.")
+            if not repo.types.get(contribution_type_id).is_active:
+                raise ValidationError("Contribution type is inactive")
+            row.contribution_type_id, row.title, row.amount_per_member = contribution_type_id, required(title, "Title"), amount
+            row.year, row.start_date, row.due_date, row.description = year, start_date, due_date, description
+            self.audit(session, "UPDATE_CONTRIBUTION_PERIOD", row)
+            return snapshot(row)

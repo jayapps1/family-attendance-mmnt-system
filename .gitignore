@@ -9,7 +9,7 @@ __pycache__/
 .env
 
 # Logs
-logs/*.log
+logs/
 
 # Generated reports
 reports/pdf/*
@@ -38,3 +38,8 @@ backups/*
 # Private restore staging and launcher diagnostics
 .family-restore-*/
 logs/*.err
+
+# Windows build output and local data pointer
+build/
+dist/
+app-data-dir.txt

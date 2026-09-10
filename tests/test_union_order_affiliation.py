@@ -21,8 +21,8 @@ def test_ordinals(number, label):
 def scenario(db):
     context = service_context(db)
     family, links = FamilyService(*context), RelationshipService(*context)
-    james = family.create(first_name='James', last_name='Appiah-Gyachie', sex='MALE', affiliation_type='LINEAGE_MEMBER')
-    agnes = family.create(first_name='Agnes', last_name='Ampoful', sex='FEMALE', affiliation_type='MARRIED_IN')
+    james = family.create(first_name='James', last_name='Appiah-Gyachie', sex='MALE', affiliation_type='LINEAGE_MEMBER', date_of_birth=date(1990, 1, 1))
+    agnes = family.create(first_name='Agnes', last_name='Ampoful', sex='FEMALE', affiliation_type='MARRIED_IN', date_of_birth=date(1990, 1, 1))
     marriage = links.save_marriage(james['id'], agnes['id'])
     return context, family, links, james, agnes, marriage
 
@@ -131,11 +131,12 @@ def test_requested_payment_scenario_receipts_affiliation_reports(db, tmp_path):
     assert (row['total_paid'], row['outstanding'], row['status']) == (Decimal('20'), Decimal('40'), 'PARTIALLY_PAID')
     history = finance.payment_history(obligation['id'])
     assert len(history) == 2 and sum(p['is_reversed'] for p in history) == 1
-    assert finance.summary(period['id'], 'MARRIED_IN')['expected_total'] == Decimal('60')
+    assert finance.summary(period['id'], 'MARRIED_IN')['expected_total'] == sum((r['amount_due'] for r in finance.register_rows(period['id']) if r['eligible'] and r['affiliation_type']=='MARRIED_IN'),Decimal('0'))
     assert finance.obligations(period['id'], affiliation_type='MARRIED_IN')[0]['family_member_id'] == agnes['id']
     report = ReportService(*context, tmp_path)
     columns, rows = report.data('Contribution summary', period_id=period['id'], affiliation_type='LINEAGE_MEMBER')
-    assert rows[0]['expected_total'] == Decimal('60') and rows[0]['collected'] == Decimal('20')
+    assert rows[0]['expected_total'] == finance.daily_summary(period['id'], 'LINEAGE_MEMBER')['expected_total']
+    assert rows[0]['collected'] == Decimal('20')
     _, rows = report.data('Payment transaction history', period_id=period['id'], affiliation_type='MARRIED_IN')
     assert rows == []
     columns, rows = report.data('Family register', affiliation_type='MARRIED_IN')

@@ -1,6 +1,6 @@
 """Reusable ttk tables and typed forms; no database access."""
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import date, time, datetime
 from decimal import Decimal, InvalidOperation
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -10,6 +10,8 @@ from ui.theme import (COLORS, FONTS, PAGE_HELP, CardFrame, SectionCard, StatusBa
 def display(value):
     if value is None:
         return ""
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M %Z").strip()
     if isinstance(value, Decimal):
         return f"GHS {value:,.2f}"
     if isinstance(value, str) and value in {"LINEAGE_MEMBER", "MARRIED_IN"}:
@@ -151,20 +153,16 @@ class TableView(ttk.Frame):
         super().__init__(parent, style="Card.TFrame", padding=1)
         self.columns, self.rows = columns, {}
         self.tree = ttk.Treeview(self, columns=columns, show="headings", selectmode=selectmode)
-        labels = {"affiliation_type": "Affiliation", "family_number": "Family No.", "phone_number": "Phone", "current_residence": "Residence",
-                  "full_name": "Name", "amount_per_member": "Per member", "is_active": "Active", "totp_enabled": "Enrolled", "amount_due": "Amount due",
-                  "amount_paid": "Amount paid", "total_paid": "Amount paid", "outstanding": "Balance"}
-        for column in columns:
-            self.tree.heading(column, text=labels.get(column, column.replace("_", " ").title()))
-            self.tree.column(column, width=160 if column in {"title", "member", "email", "full_name"} else 130,
-                             minwidth=85, anchor="e" if column in {"amount_due", "amount_paid", "total_paid", "outstanding"} else "w")
+        from ui.table_style import configure_columns
+        configure_columns(self.tree, columns)
         vertical = ttk.Scrollbar(self, command=self.tree.yview)
         horizontal = ttk.Scrollbar(self, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
         self.tree.grid(row=0, column=0, sticky="nsew")
         vertical.grid(row=0, column=1, sticky="ns")
         horizontal.grid(row=1, column=0, sticky="ew")
-        self.empty = ttk.Label(self, text="No records to display. Use the actions above to get started.", style="CardHelper.TLabel", anchor="center")
+        from ui.table_style import empty_message
+        self.empty = ttk.Label(self, text=empty_message(columns), style="CardHelper.TLabel", anchor="center")
         footer = CardFrame(self, padding=(12, 8))
         footer.grid(row=2, column=0, columnspan=2, sticky="ew")
         self.count = ttk.Label(footer, text="0 records", style="CardHelper.TLabel")
@@ -214,7 +212,7 @@ class TableView(ttk.Frame):
         if row.get('affiliation_type'):
             self.affiliation_badge.set(display(row['affiliation_type']), 'info' if row['affiliation_type'] == 'LINEAGE_MEMBER' else 'gold')
             self.affiliation_badge.pack(side='right', padx=6)
-        status = "REVERSED" if row.get("is_reversed") else row.get("status") or row.get("living_status") or row.get("role") or row.get("action")
+        status = "REVERSED" if row.get("is_reversed") else row.get("status") or row.get("payment_status") or row.get("living_status") or row.get("role") or row.get("action")
         if status:
             self.badge.set(str(status))
             self.badge.pack(side="right")
@@ -230,7 +228,7 @@ class TableView(ttk.Frame):
 
 
 class ActionBar(ttk.Frame):
-    """Wrap existing packed controls into grid rows when space is limited."""
+    """Wrap controls by their actual widths without shared grid columns widening rows."""
     def __init__(self, parent):
         super().__init__(parent)
         self._layout = None
@@ -244,26 +242,32 @@ class ActionBar(ttk.Frame):
         if signature == self._layout:
             return
         self._layout = signature
+        x = y = row_height = 0
         for child in children:
             child.pack_forget()
             child.grid_forget()
-        row = column = used = 0
-        for child in children:
-            width = child.winfo_reqwidth() + 8
-            if used and used + width > self.winfo_width():
-                row, column, used = row + 1, 0, 0
-            child.grid(row=row, column=column, sticky="w", padx=(0, 8), pady=(0, 8))
-            used, column = used + width, column + 1
+            width = min(child.winfo_reqwidth(), self.winfo_width())
+            height = child.winfo_reqheight()
+            if x and x + width > self.winfo_width():
+                y += row_height + 8
+                x = row_height = 0
+            child.place(x=x, y=y, width=width, height=height)
+            x += width + 8
+            row_height = max(row_height, height)
+        self.configure(height=y + row_height + 8)
+
 
 
 class Screen(ttk.Frame):
-    def __init__(self, app, title):
+    def __init__(self, app, title, *, back=None):
         super().__init__(app.content, padding=(24, 20))
         self.app = app
         if hasattr(app, "page_title"):
             app.page_title.set(title.split(" - ")[0])
         self.page_header = ttk.Frame(self)
         self.page_header.pack(fill="x", pady=(0, 18))
+        from ui.navigation import navigation_buttons
+        navigation_buttons(self.page_header,app,back).pack(side="right",anchor="n")
         ttk.Label(self.page_header, text=title, style="Page.TLabel").pack(anchor="w")
         if title in PAGE_HELP:
             ttk.Label(self.page_header, text=PAGE_HELP[title], style="Subtitle.TLabel").pack(anchor="w", pady=(5, 0))
@@ -291,7 +295,9 @@ class Screen(ttk.Frame):
         return table
 
     def show_text(self, title, text):
-        dialog = tk.Toplevel(self)
+        dialog = tk.Toplevel(self.app)
+        from ui.navigation import dialog_navigation
+        dialog_navigation(dialog,self.app)
         dialog.title(title)
         dialog.geometry("820x620")
         dialog.minsize(640, 440)
@@ -311,7 +317,10 @@ class Screen(ttk.Frame):
 
 def show_details(parent, title, values, *, statistics=False):
     from ui.theme import ResponsiveGrid, StatCard, status_tone
-    dialog = tk.Toplevel(parent)
+    app = parent.app if hasattr(parent,"app") else parent
+    dialog = tk.Toplevel(app)
+    from ui.navigation import dialog_navigation
+    dialog_navigation(dialog,app)
     dialog.title(title)
     dialog.geometry("860x640")
     dialog.configure(background=COLORS["background"])

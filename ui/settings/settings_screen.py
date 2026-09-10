@@ -40,28 +40,13 @@ class SettingsScreen(Screen):
         self.app.run(self.app.services["settings"].list, apply)
 
     def drive_settings(self):
+        service = self.app.services["backup"]
         def choose(_):
-            from pathlib import Path
-            from config.settings import BASE_DIR
-            from dotenv import set_key
-            import os
             folder = filedialog.askdirectory(parent=self, title="Select the backup folder inside Google Drive for desktop")
-            if not folder:
-                return
-            def save():
-                service = self.app.services["backup"]
-                with service.transaction(super_admin=True):
-                    pass
-                if not Path(folder).is_dir():
-                    raise ValueError("The selected folder is unavailable.")
-                set_key(str(BASE_DIR / ".env"), "GOOGLE_DRIVE_BACKUP_DIR", folder)
-                os.environ["GOOGLE_DRIVE_BACKUP_DIR"] = folder
-                service.drive_folder = Path(folder)
-            self.app.run(save, lambda _: messagebox.showinfo("Drive folder saved", "Future backups will be copied here for Google Drive for desktop to sync:\n" + folder, parent=self))
-        def authorize():
-            with self.app.services["backup"].transaction(super_admin=True):
-                pass
-        self.app.run(authorize, choose)
+            if folder:
+                self.app.run(lambda: service.configure_drive_folder(folder),
+                             lambda _: messagebox.showinfo("Drive folder saved", "Future backups will be copied here for Google Drive for desktop to sync:\n" + folder, parent=self))
+        self.app.run(service.authorize_configuration, choose)
 
     def sync_latest(self):
         service = self.app.services["backup"]
@@ -73,5 +58,7 @@ class SettingsScreen(Screen):
         show_restore(self.app)
 
     def backup(self):
+        if not messagebox.askyesno("Create backup", "Create a verified backup of the database and media now?", parent=self):
+            return
         self.app.run(self.app.services["backup"].create,
                      lambda path: messagebox.showinfo("Backup verified", "Verified local backup:\n" + path + ("\n\nAlso copied to Google Drive for desktop. Check its sync status for cloud upload completion." if self.app.services["backup"].drive_folder else "\n\nSet your Google Drive folder to enable a cloud copy."), parent=self))

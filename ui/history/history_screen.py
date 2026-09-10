@@ -1,6 +1,6 @@
 from tkinter import filedialog, ttk
 from models import MediaType
-from ui.components import Screen, Field, FormDialog, enum_options
+from ui.components import Screen, Field, FormDialog, enum_options, TableView
 
 
 class HistoryScreen(Screen):
@@ -12,9 +12,17 @@ class HistoryScreen(Screen):
         self.button("List attachments", self.attachments)
         self.button("Attach media", self.upload)
         self.button("View attachment", self.view)
-        self.grid = self.table(("title", "historical_period", "author", "summary"))
-        ttk.Label(self, text="Story attachments", style="Page.TLabel", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(4, 12))
-        self.media = self.table(("title", "media_type", "file_path"))
+        panes = ttk.Panedwindow(self, orient="vertical")
+        panes.pack(fill="both", expand=True)
+        self.grid = TableView(panes, ("title", "historical_period", "author", "summary"))
+        self.grid.tree.configure(height=4)
+        panes.add(self.grid, weight=1)
+        attachments = ttk.Frame(panes)
+        panes.add(attachments, weight=1)
+        ttk.Label(attachments, text="Story attachments", style="Page.TLabel", font=("Segoe UI Semibold", 14)).pack(anchor="w", pady=(4, 12))
+        self.media = TableView(attachments, ("title", "media_type", "file_path"))
+        self.media.tree.configure(height=3)
+        self.media.pack(fill="both", expand=True)
         app.run(app.services["history"].list, self.grid.set_rows)
 
     def edit(self, row=None):

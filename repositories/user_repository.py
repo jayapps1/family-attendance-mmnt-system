@@ -18,3 +18,6 @@ class UserRepository(Repository[User]):
         return list(self.session.scalars(select(RecoveryCode).where(
             RecoveryCode.user_id == user_id, RecoveryCode.is_used.is_(False)
         ).with_for_update()))
+
+    def names(self):
+        return dict(self.session.execute(select(User.id, User.username)).all())

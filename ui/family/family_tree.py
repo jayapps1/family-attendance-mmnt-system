@@ -50,6 +50,8 @@ def generation_layout(data, descendants_only=False):
 
 def show_tree(app, data, descendants_only=False):
     dialog = tk.Toplevel(app)
+    from ui.navigation import dialog_navigation
+    dialog_navigation(dialog,app)
     dialog.title("Family tree")
     dialog.geometry("1050x740")
     dialog.minsize(760, 560)
@@ -127,8 +129,8 @@ def show_tree(app, data, descendants_only=False):
         table_frame = ttk.Frame(notebook)
         notebook.add(table_frame, text=key.title())
         tree = ttk.Treeview(table_frame, columns=("name", "number", "relationship", "generation"), show="headings")
-        for column in ("name", "number", "relationship", "generation"):
-            tree.heading(column, text=column.title())
+        from ui.table_style import configure_columns
+        configure_columns(tree,("name", "number", "relationship", "generation"))
         scroll = ttk.Scrollbar(table_frame, command=tree.yview)
         across = ttk.Scrollbar(table_frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=scroll.set, xscrollcommand=across.set)
@@ -140,6 +142,8 @@ def show_tree(app, data, descendants_only=False):
         for row in data.get(key, []):
             tree.insert("", "end", iid=str(row["id"]), values=(row["first_name"] + " " + row["last_name"], row["family_number"],
                         row.get("relationship_label", ""), row.get("generation", "")))
+        ttk.Label(table_frame, text=f"{len(data.get(key, []))} {key}" if data.get(key) else f"No {key} recorded.",
+                  style="Subtitle.TLabel").grid(row=2, column=0, sticky="w", pady=8)
         by_id = {str(r["id"]): r["id"] for r in data.get(key, [])}
         def selected(event=None, tree=tree, by_id=by_id):
             if tree.selection():

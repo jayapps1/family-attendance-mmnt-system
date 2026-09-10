@@ -75,8 +75,8 @@ verify a code, and save the one-use recovery codes. Subsequent sign-in accepts
 - **Contributions:** create configurable types and periods, explicitly select
   eligible members, activate a period, record installments, and review balances.
   Amounts are in GHS and are never fixed to 60. Period amounts are snapshots;
-  later type defaults do not change obligations. Only active, non-deceased
-  members can be assigned. Archived members' existing financial history remains.
+  later type defaults do not change obligations. Only living members aged 23 or older with a recorded date of birth
+  can receive new obligations or payments; archived members must first be restored. Archived members' existing financial history remains.
   Payments require an active period. Closed periods cannot receive new payments,
   but incorrect payments may still be reversed with a reason.
 - **Gallery / history:** create albums and stories, import attachments into
@@ -173,3 +173,37 @@ Use Family Branches to create founder-based lineages that automatically include
 biological descendants, and use the branch filter in Family Register.
 See [genealogy and branch guide](docs/genealogy-branches.md) for workflows,
 derivation rules, validation and service interfaces.
+
+
+## Audit completion and navigation
+
+See [the project audit](docs/project-audit.md) for validation results and the change inventory.
+Major screens and detail windows have shared Back/Home controls. Home resets the
+navigation history and returns to Dashboard. Relationships/marriages, history
+attachments and gallery files have adjustable split panes. Table headers and data
+use the same alignment policy; use horizontal scrolling for wide records.
+
+Meetings include search and start/complete/cancel actions. Administrators can edit
+contact details without resetting authenticator enrollment. Empty gallery albums
+can be deleted after confirmation; albums containing media are preserved.
+Attendance and payment history show who recorded each entry.
+
+Active annual contribution reports include eligible members before their first
+payment, matching the collection register. Closed periods and individual
+historical reports preserve recorded obligations. Viewing/exporting a report does
+not create an obligation or payment.
+
+Errors are written to rotating files under `logs/`, with exception values and SQL
+parameters excluded. Run `python -m pytest` to collect the production `tests/`
+suite; generated files and temporary PostgreSQL clusters are excluded.
+
+
+## Windows executable
+
+The Windows folder build is under `dist/FamilyManagement/FamilyManagement.exe`.
+See [Windows build and deployment instructions](docs/windows-build.md). The local
+build uses the existing data folder; the shareable ZIP excludes configuration
+secrets and private data. Keep the entire executable folder together.
+
+Contribution eligibility, current versus historical totals, and the redesigned
+period/payment screens are documented in [Contribution eligibility](docs/contribution-eligibility.md).

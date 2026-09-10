@@ -113,7 +113,7 @@ def test_real_service_screens(db, monkeypatch, desktop, tmp_path):
     from ui.contributions.contribution_register import ContributionRegister
     context = service_context(db)
     family = FamilyService(*context)
-    member = family.create(first_name="UI", last_name="Integration", sex="FEMALE")
+    member = family.create(first_name="UI", last_name="Integration", sex="FEMALE", date_of_birth=date(1990, 1, 1))
     finance = ContributionService(*context)
     kind = finance.create_type("UI " + uuid.uuid4().hex, "ANNUAL", "75")
     period = finance.create_period(kind["id"], "UI period", "75")
@@ -179,7 +179,7 @@ def test_real_service_screens(db, monkeypatch, desktop, tmp_path):
         form.button.invoke()
         drain(app)
         assert next(iter(app.screen.grid.rows.values()))["is_reversed"]
-        assert finance.summary(period["id"])["outstanding"] == Decimal("75.00")
+        assert finance.obligations(period["id"], member["id"])[0]["outstanding"] == Decimal("75.00")
         assert not errors
     finally:
         app.media_root = original_media_root
@@ -238,7 +238,7 @@ def test_profile_relationship_workflows_and_branches(db, monkeypatch, desktop, t
     import ui.app as app_module
     context = service_context(db)
     family = FamilyService(*context)
-    mother = family.create(first_name="UI mother", last_name="Genealogy", sex="FEMALE")
+    mother = family.create(first_name="UI mother", last_name="Genealogy", sex="FEMALE", date_of_birth=date(1990, 1, 1))
     monkeypatch.setattr(app_module, "SessionLocal", context[0])
     errors = []
     monkeypatch.setattr("ui.app.messagebox.showerror", lambda *a, **kw: errors.append(a))
@@ -322,8 +322,8 @@ def test_couple_child_form_and_details(db, monkeypatch, desktop, tmp_path):
     import ui.app as app_module
     context = service_context(db)
     family, links = FamilyService(*context), RelationshipService(*context)
-    james = family.create(first_name='James', last_name='Appiah-Gyachie', sex='MALE')
-    agnes = family.create(first_name='Agnes', last_name='Ampoful', sex='FEMALE')
+    james = family.create(first_name='James', last_name='Appiah-Gyachie', sex='MALE', date_of_birth=date(1990, 1, 1))
+    agnes = family.create(first_name='Agnes', last_name='Ampoful', sex='FEMALE', date_of_birth=date(1990, 1, 1))
     marriage = links.save_marriage(james['id'], agnes['id'])
     monkeypatch.setattr(app_module, 'SessionLocal', context[0])
     errors = []
@@ -353,7 +353,7 @@ def test_couple_child_form_and_details(db, monkeypatch, desktop, tmp_path):
         app.update()
         assert details.winfo_exists()
         details.destroy()
-        child = family.create(first_name='Janet', last_name='Appiah-Gyachie', sex='FEMALE')
+        child = family.create(first_name='Janet', last_name='Appiah-Gyachie', sex='FEMALE', date_of_birth=date(1990, 1, 1))
         links.save(james['id'], child['id'], 'FATHER')
         form = child_form(app, row, family.list(), False, saved.append)
         form.inputs['existing_id'].set(next(iter(member_options([child]))))
@@ -456,7 +456,7 @@ def test_simple_contribution_real_daily_workflow(db, monkeypatch, desktop):
     import ui.app as app_module
     context=service_context(db)
     family,finance=FamilyService(*context),ContributionService(*context)
-    james=family.create(first_name='James',last_name='Appiah-Gyachie',sex='MALE',phone_number='0542011738')
+    james=family.create(first_name='James',last_name='Appiah-Gyachie',sex='MALE',phone_number='0542011738', date_of_birth=date(1990, 1, 1))
     monkeypatch.setattr(app_module,'SessionLocal',context[0])
     errors=[]
     monkeypatch.setattr('ui.app.messagebox.showerror',lambda *a,**kw:errors.append(a))
@@ -491,3 +491,161 @@ def test_simple_contribution_real_daily_workflow(db, monkeypatch, desktop):
         app.identity=None
         for w in app.winfo_children():
             if isinstance(w,tk.Toplevel): w.destroy()
+
+
+def test_real_login_navigation_and_table_alignment(db, monkeypatch, desktop):
+    import tkinter as tk
+    from tkinter import ttk
+    from datetime import timedelta
+    import pyotp
+    from tests.test_auth import configured_auth
+    from ui.family.family_register import FamilyRegister
+    from ui.meetings.meeting_list import MeetingList
+    from ui.dashboard.dashboard import Dashboard
+    from ui.components import show_details
+    import ui.app as module
+    auth, ticket, _, clock, _ = configured_auth(db)
+    monkeypatch.setattr(module, "SessionLocal", auth.sessions)
+    monkeypatch.setattr(desktop, "auth", auth)
+    monkeypatch.setattr(auth, "needs_bootstrap", lambda: False)
+    errors = []
+    monkeypatch.setattr("ui.app.messagebox.showerror", lambda *a, **k: errors.append(a))
+    app = desktop
+    try:
+        app.show_login()
+        drain(app)
+        clock[0] += timedelta(seconds=30)
+        app.screen.identifier.insert(0, ticket.username)
+        app.screen.code.insert(0, pyotp.TOTP(ticket.secret).at(clock[0]))
+        app.screen.signin.invoke()
+        drain(app)
+        assert app.identity.user_id == ticket.user_id
+        assert isinstance(app.screen, Dashboard)
+        app.show(FamilyRegister)
+        drain(app)
+        app.show(MeetingList)
+        drain(app)
+        app.back()
+        drain(app)
+        assert isinstance(app.screen, FamilyRegister)
+        tree = app.screen.grid.tree
+        for column in tree["columns"]:
+            assert str(tree.heading(column, "anchor")) == str(tree.column(column, "anchor"))
+        show_details(app.screen, "Navigation test", {"name": "Test member"})
+        dialog = next(w for w in app.winfo_children() if isinstance(w, tk.Toplevel))
+        def widgets(parent):
+            for child in parent.winfo_children():
+                yield child
+                yield from widgets(child)
+        next(w for w in widgets(dialog) if isinstance(w, ttk.Button) and w.cget("text") == "Back").invoke()
+        assert not dialog.winfo_exists()
+        assert isinstance(app.screen, FamilyRegister)
+        app.home()
+        drain(app)
+        assert isinstance(app.screen, Dashboard)
+        assert not app.navigation_history
+        monkeypatch.setattr("ui.app.messagebox.askyesno", lambda *a, **k: True)
+        app.request_logout()
+        drain(app)
+        assert app.identity is None
+        assert not errors
+    finally:
+        app.identity = None
+
+
+def test_split_tables_and_toolbar_fit_minimum_window(monkeypatch, desktop):
+    from ui.family.family_register import RelationshipScreen
+    from ui.history.history_screen import HistoryScreen
+    from ui.gallery.gallery_screen import GalleryScreen
+    from tkinter import ttk
+    app = desktop
+    app.identity = None
+    app.services = {name: StubService() for name in ("family", "relationships", "history", "gallery")}
+    try:
+        app.geometry("1100x760")
+        app.deiconify()
+        for route in (RelationshipScreen, HistoryScreen, GalleryScreen):
+            app.show(route)
+            drain(app)
+            tables = (app.screen.relationships, app.screen.marriages) if route is RelationshipScreen else (
+                (app.screen.grid, app.screen.media) if route is HistoryScreen else (app.screen.items,))
+            bottom = app.screen.winfo_rooty() + app.screen.winfo_height()
+            for table in tables:
+                assert table.tree.winfo_ismapped()
+                assert table.tree.winfo_height() >= 70
+                assert table.winfo_rooty() + table.winfo_height() <= bottom
+            toolbar = app.screen.toolbar
+            for control in toolbar.winfo_children():
+                assert control.winfo_x() + control.winfo_width() <= toolbar.winfo_width()
+    finally:
+        app.withdraw()
+        app.geometry("1380x820")
+
+
+def test_contribution_review_and_financial_pages(db,monkeypatch,desktop):
+    import uuid
+    import tkinter as tk
+    from services.auth_service import AuthSession, AuthService
+    from services.family_service import FamilyService
+    from services.contribution_service import ContributionService
+    from tests.service_helpers import service_context
+    import ui.app as module
+    from ui.components import FormDialog
+    from ui.contributions.contribution_periods import ContributionPeriods
+    from ui.contributions.recent_payments import RecentPayments
+    from ui.contributions.contribution_dashboard import ContributionDashboard
+    from ui.contributions.payment_form import quick_payment, RecordContributionForm
+    context=service_context(db)
+    family,finance=FamilyService(*context),ContributionService(*context)
+    member=family.create(first_name='Review',last_name='Birthday',sex='FEMALE')
+    period=finance.setup_annual(2089,'60')
+    monkeypatch.setattr(module,'SessionLocal',context[0])
+    monkeypatch.setattr(AuthService,'needs_bootstrap',lambda self:False)
+    errors=[]
+    monkeypatch.setattr('ui.app.messagebox.showerror',lambda *a,**k:errors.append(a))
+    app=desktop
+    try:
+        app.signed_in(AuthSession(context[1],'Review tester','SUPER_ADMIN',uuid.uuid4()));drain(app)
+        quick_payment(app,member['id'],period_id=period['id']);drain(app)
+        payment=next(w for w in app.winfo_children() if isinstance(w,RecordContributionForm))
+        assert payment.preview['eligibility']=='DOB_UNKNOWN'
+        assert str(payment.button['state'])=='disabled'
+        payment.edit_member();drain(app)
+        edit=next(w for w in app.winfo_children() if type(w) is FormDialog)
+        edit.inputs['date_of_birth'].insert(0,'1990-01-01')
+        edit.button.invoke();drain(app)
+        assert payment.preview['eligible'] and str(payment.button['state'])=='normal'
+        payment.inputs['amount_paid'].insert(0,'30')
+        payment.button.invoke();drain(app)
+        for screen in (ContributionPeriods,RecentPayments):
+            app.show(screen);drain(app)
+            for column in app.screen.grid.tree['columns']:
+                assert str(app.screen.grid.tree.heading(column,'anchor'))==str(app.screen.grid.tree.column(column,'anchor'))
+            if screen is ContributionPeriods:
+                assert any(r['id']==period['id'] for r in app.screen.grid.rows.values())
+                row=next(r for r in app.screen.grid.rows.values() if r['id']==period['id'])
+                app.screen.edit(row);drain(app)
+                form=next(w for w in app.winfo_children() if type(w) is FormDialog)
+                form.inputs['title'].delete(0,'end');form.inputs['title'].insert(0,'Reviewed annual period')
+                form.button.invoke();drain(app)
+                assert next(r for r in finance.periods() if r['id']==period['id'])['title']=='Reviewed annual period'
+            else:
+                app.screen.inputs['search'].insert(0,member['family_number']);app.screen.load();drain(app)
+                assert len(app.screen.grid.rows)==1
+                app.screen.grid.tree.selection_set('0');app.screen.view();drain(app)
+                for dialog in app.winfo_children():
+                    if isinstance(dialog,tk.Toplevel):dialog.destroy()
+                app.screen.reverse();drain(app)
+                form=next(w for w in app.winfo_children() if type(w) is FormDialog)
+                form.inputs['reason'].insert('1.0','Test reversal')
+                form.button.invoke();drain(app)
+                assert finance.recent_payments(period['id'],status='REVERSED',limit=None)
+            app.screen.back();drain(app)
+            assert isinstance(app.screen,ContributionDashboard)
+            app.home();drain(app)
+            assert not app.navigation_history
+        assert not errors
+    finally:
+        app.identity=None
+        for widget in app.winfo_children():
+            if isinstance(widget,tk.Toplevel):widget.destroy()

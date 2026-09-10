@@ -66,6 +66,9 @@ class RecordContributionForm(FormDialog):
             widget.get = lambda w=widget: str(w.cget('text'))
             self.inputs[key] = widget
         self.badge = StatusBadge(summary.body, 'Select a member', tone='info'); self.badge.pack(anchor='w')
+        self.eligibility_info = ttk.Label(summary.body, style='CardHelper.TLabel', wraplength=610)
+        self.eligibility_info.pack(anchor='w', pady=6)
+        ttk.Button(summary.body, text='Edit Member', command=self.edit_member).pack(anchor='w')
         payment = SectionCard(area.body, 'Payment'); payment.pack(fill='x')
         for col in (0,1): payment.body.columnconfigure(col,weight=1)
         for index,(key,label,initial) in enumerate((('amount_paid','Amount received (GHS) *',''),('payment_method','Payment method *','Cash'),
@@ -119,10 +122,29 @@ class RecordContributionForm(FormDialog):
             self.preview = row
             for key in ('amount_due','total_paid','outstanding'): self.inputs['_'+key].configure(text=display(row[key]))
             self.member_info.configure(text=row['family_number'] + ' | ' + display(row['affiliation_type']))
-            self.badge.set('PAID IN FULL' if row['outstanding'] == 0 else row['status'], 'success' if row['outstanding'] == 0 else None)
-            if not row['can_pay'] and row['outstanding'] > 0: self.badge.set('Payment unavailable for this member / period', 'warning')
+            self.eligibility_info.configure(text=row['eligibility_message'])
+            self.badge.set(row['eligibility_label'] if not row['eligible'] else 'PAID IN FULL' if row['outstanding'] == 0 else row['status'], 'warning' if not row['eligible'] else 'success' if row['outstanding'] == 0 else None)
+            if row['eligible'] and not row['can_pay'] and row['outstanding'] > 0: self.badge.set('Payment unavailable for this member / period', 'warning')
             self.button.configure(state='normal' if row['can_pay'] and not self.saving else 'disabled')
         self.app.run(lambda:self.app.services['contributions'].payment_preview(period,member),loaded)
+
+    def edit_member(self):
+        member_id, _ = self.selection()
+        if member_id is None:
+            raise ValueError("Select a member first")
+        from ui.family.member_form import member_form
+        row = next(r for r in self.members if r['id'] == member_id)
+        def saved(_):
+            def reload(rows):
+                if not self.winfo_exists(): return
+                self.members = rows
+                self.people = member_options(rows)
+                self.inputs['member_id'].configure(values=list(self.people))
+                self.inputs['member_id'].set(next(k for k,v in self.people.items() if v == member_id))
+                self.grab_set()
+                self.load_balance()
+            self.app.run(self.app.services['family'].list, reload)
+        member_form(self.app, row, success=saved)
 
     def submit(self):
         if self.saving or not self.preview or not self.preview['can_pay']: return

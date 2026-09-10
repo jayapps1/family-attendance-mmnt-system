@@ -12,9 +12,13 @@ def show_file(app, relative):
             source.thumbnail((1000, 700))
             photo = ImageTk.PhotoImage(source.copy())
         dialog = tk.Toplevel(app)
+        from ui.navigation import dialog_navigation
+        dialog_navigation(dialog,app)
         dialog.title(path.name)
         label = ttk.Label(dialog, image=photo)
         label.image = photo
         label.pack()
     elif messagebox.askyesno("Open file", "Open this media file in its default application?", parent=app):
-        os.startfile(path)
+        from utils.external_process import system_libraries
+        with system_libraries():
+            os.startfile(path)
