@@ -7,6 +7,11 @@ from services.base import Service, snapshot
 from utils.validators import ValidationError
 
 
+BIOLOGICAL_PARENT_TYPES = {RelationshipType.FATHER, RelationshipType.MOTHER}
+STEP_MARRIAGE_STATUSES = {MarriageStatus.MARRIED, MarriageStatus.SEPARATED, MarriageStatus.WIDOWED}
+DEFAULT_PARENTAGE = object()
+
+
 def descendants(edges, start):
     children = defaultdict(set)
     for parent, child in edges:
@@ -137,6 +142,68 @@ class RelationshipService(ChildOrderMixin, Service):
         return dict(snapshot(row), spouse_one=one, spouse_two=two,
                     couple_name=name(one) + ' & ' + name(two), children=children, child_count=len(children), order_warning=warning)
 
+    @staticmethod
+    def _biological_parent_ids(rows, child_id):
+        return {r.parent_id for r in rows if r.child_id == child_id and r.relationship_type in BIOLOGICAL_PARENT_TYPES}
+
+    @staticmethod
+    def _step_parent_ids(rows, marriages, child_id):
+        biological = RelationshipService._biological_parent_ids(rows, child_id)
+        steps = set()
+        for marriage in marriages:
+            if marriage.status not in STEP_MARRIAGE_STATUSES:
+                continue
+            if marriage.spouse_one_id in biological and marriage.spouse_two_id not in biological:
+                steps.add(marriage.spouse_two_id)
+            if marriage.spouse_two_id in biological and marriage.spouse_one_id not in biological:
+                steps.add(marriage.spouse_one_id)
+        return steps
+
+    @staticmethod
+    def _step_sibling_match(rows, marriages, member_a_id, member_b_id):
+        parents_a = RelationshipService._biological_parent_ids(rows, member_a_id)
+        parents_b = RelationshipService._biological_parent_ids(rows, member_b_id)
+        if parents_a & parents_b:
+            return False
+        current_pairs = [m for m in marriages if m.status in STEP_MARRIAGE_STATUSES]
+        return any(({m.spouse_one_id, m.spouse_two_id} & parents_a)
+                   and ({m.spouse_one_id, m.spouse_two_id} & parents_b)
+                   and not ({m.spouse_one_id, m.spouse_two_id} <= parents_a)
+                   and not ({m.spouse_one_id, m.spouse_two_id} <= parents_b)
+                   for m in current_pairs)
+
+    @staticmethod
+    def _sibling_label(sex, kind):
+        noun = "Brother" if sex == "MALE" else "Sister" if sex == "FEMALE" else "Sibling"
+        return {"FULL_SIBLING": "Full ", "HALF_SIBLING": "Half ", "STEP_SIBLING": "Step "}.get(kind, "") + noun
+
+    @staticmethod
+    def _typed_sibling_rows(graph, rows, marriages, member_id):
+        result = []
+        for candidate_id, candidate in graph.members.items():
+            if candidate_id == member_id:
+                continue
+            kind = RelationshipService._sibling_kind(rows, marriages, member_id, candidate_id)
+            if kind == "NOT_SIBLINGS":
+                continue
+            result.append(dict(candidate, sibling_type=kind,
+                               relationship_label=RelationshipService._sibling_label(candidate["sex"], kind)))
+        return sorted(result, key=lambda r: ({"FULL_SIBLING": 0, "HALF_SIBLING": 1, "STEP_SIBLING": 2}[r["sibling_type"]],
+                                             graph.order_keys.get(r["id"], ("~", 0)),
+                                             r.get("family_number", str(r["id"]))))
+
+    @staticmethod
+    def _sibling_kind(rows, marriages, member_a_id, member_b_id):
+        shared = (RelationshipService._biological_parent_ids(rows, member_a_id)
+                  & RelationshipService._biological_parent_ids(rows, member_b_id))
+        if len(shared) >= 2:
+            return "FULL_SIBLING"
+        if len(shared) == 1:
+            return "HALF_SIBLING"
+        if RelationshipService._step_sibling_match(rows, marriages, member_a_id, member_b_id):
+            return "STEP_SIBLING"
+        return "NOT_SIBLINGS"
+
     def marriages(self, member_id=None):
         with self.transaction() as session:
             return [self._couple(session, row) for row in RelationshipRepository(session).marriages(member_id)]
@@ -161,7 +228,8 @@ class RelationshipService(ChildOrderMixin, Service):
                     if r.child_id == child_id and r.parent_id in {row.spouse_one_id, row.spouse_two_id}]
 
     def add_child_to_marriage(self, identity, *, new_member=None, existing_id=None,
-                              spouse_one_type='FATHER', spouse_two_type='MOTHER',
+                              spouse_one_parent_id=DEFAULT_PARENTAGE, spouse_two_parent_id=DEFAULT_PARENTAGE,
+                              spouse_one_type=DEFAULT_PARENTAGE, spouse_two_type=DEFAULT_PARENTAGE,
                               confirmed_links=None, media_root=None, birth_order=None):
         from sqlalchemy.orm import sessionmaker
         from services.family_service import FamilyService
@@ -174,6 +242,26 @@ class RelationshipService(ChildOrderMixin, Service):
             with self.transaction() as session:
                 RelationshipRepository(session).lock_domain('genealogy')
                 marriage = Repository(session, Marriage).get(identity, lock=True)
+                spouse_one = FamilyRepository(session).get(marriage.spouse_one_id)
+                spouse_two = FamilyRepository(session).get(marriage.spouse_two_id)
+                if spouse_one_parent_id is DEFAULT_PARENTAGE:
+                    spouse_one_parent_id = marriage.spouse_one_id
+                if spouse_two_parent_id is DEFAULT_PARENTAGE:
+                    spouse_two_parent_id = marriage.spouse_two_id
+                if spouse_one_type is DEFAULT_PARENTAGE and spouse_one_parent_id == marriage.spouse_one_id:
+                    spouse_one_type = 'FATHER' if spouse_one.sex.value == 'MALE' else 'MOTHER'
+                elif spouse_one_type is DEFAULT_PARENTAGE and spouse_one_parent_id:
+                    parent = FamilyRepository(session).get(spouse_one_parent_id)
+                    spouse_one_type = 'FATHER' if parent.sex.value == 'MALE' else 'MOTHER'
+                elif spouse_one_type is DEFAULT_PARENTAGE:
+                    spouse_one_type = None
+                if spouse_two_type is DEFAULT_PARENTAGE and spouse_two_parent_id == marriage.spouse_two_id:
+                    spouse_two_type = 'FATHER' if spouse_two.sex.value == 'MALE' else 'MOTHER'
+                elif spouse_two_type is DEFAULT_PARENTAGE and spouse_two_parent_id:
+                    parent = FamilyRepository(session).get(spouse_two_parent_id)
+                    spouse_two_type = 'FATHER' if parent.sex.value == 'MALE' else 'MOTHER'
+                elif spouse_two_type is DEFAULT_PARENTAGE:
+                    spouse_two_type = None
                 if new_member is not None:
                     nested = sessionmaker(bind=session.connection(), join_transaction_mode='create_savepoint')
                     family = FamilyService(nested, self.actor_id)
@@ -184,14 +272,21 @@ class RelationshipService(ChildOrderMixin, Service):
                         photo = member['profile_image_path']
                 else:
                     member = snapshot(FamilyRepository(session).get(existing_id))
+                parent_roles = ((spouse_one_parent_id, spouse_one_type),
+                                (spouse_two_parent_id, spouse_two_type))
+                parent_roles = [(parent, role) for parent, role in parent_roles if parent and role]
+                selected_parents = {parent for parent, _role in parent_roles}
                 links = [r for r in RelationshipRepository(session).list() if r.child_id == member['id']
-                         and r.parent_id in {marriage.spouse_one_id, marriage.spouse_two_id}]
+                         and r.parent_id in selected_parents]
                 if len(links) == 2:
-                    raise ValidationError('This member is already registered as a child of this couple.')
+                    raise ValidationError('This member is already registered with these parent links.')
                 expected = {(str(r.id), r.relationship_type.value) for r in links}
                 if links and set(confirmed_links or []) != expected:
                     raise ValidationError('Confirm the existing parent link before adding the missing link.')
-                for parent, role in ((marriage.spouse_one_id, spouse_one_type), (marriage.spouse_two_id, spouse_two_type)):
+                for parent, role in parent_roles:
+                    FamilyRepository(session).get(parent)
+                    if parent == member['id']:
+                        raise ValidationError('A child cannot be their own parent.')
                     existing = next((r for r in links if r.parent_id == parent), None)
                     if existing:
                         if existing.relationship_type.value != role:
@@ -199,10 +294,14 @@ class RelationshipService(ChildOrderMixin, Service):
                     else:
                         self._save(session, parent, member['id'], role)
                 repo = RelationshipRepository(session)
-                children = [r.id for r in repo.ordered_children(marriage) if r.id != member['id']]
-                position = len(children)+1 if birth_order is None else self._position(birth_order, len(children)+1)
-                children.insert(position-1, member['id'])
-                repo.write_child_order(marriage.id, children)
+                is_union_child = member['id'] in {r.id for r in repo.shared_children(marriage.spouse_one_id, marriage.spouse_two_id)}
+                if is_union_child:
+                    children = [r.id for r in repo.ordered_children(marriage) if r.id != member['id']]
+                    position = len(children)+1 if birth_order is None else self._position(birth_order, len(children)+1)
+                    children.insert(position-1, member['id'])
+                    repo.write_child_order(marriage.id, children)
+                elif birth_order is not None:
+                    raise ValidationError('Birth order can only be recorded for a child biologically linked to both spouses.')
                 if existing_id is not None:
                     self.audit(session, 'LINK_EXISTING_CHILD', marriage, str(member['id']))
                 self.audit(session, 'ADD_CHILD_TO_MARRIAGE', marriage, 'Linked child ' + str(member['id']))
@@ -272,7 +371,20 @@ class RelationshipService(ChildOrderMixin, Service):
         with self.transaction() as session:
             graph = self.graph(session)
             result = graph.summary(member_id)
-            marriages = RelationshipRepository(session).marriages(member_id)
+            repo = RelationshipRepository(session)
+            rows = repo.list()
+            all_marriages = repo.marriages()
+            typed_siblings = self._typed_sibling_rows(graph, rows, all_marriages, member_id)
+            result["siblings"] = typed_siblings
+            result["full_siblings"] = [r for r in typed_siblings if r["sibling_type"] == "FULL_SIBLING"]
+            result["half_siblings"] = [r for r in typed_siblings if r["sibling_type"] == "HALF_SIBLING"]
+            result["step_siblings"] = [r for r in typed_siblings if r["sibling_type"] == "STEP_SIBLING"]
+            stepchildren = []
+            for child_id, child in graph.members.items():
+                if child_id != member_id and member_id in self._step_parent_ids(rows, all_marriages, child_id):
+                    stepchildren.append(dict(child, relationship_label="Stepchild"))
+            result["stepchildren"] = sorted(stepchildren, key=lambda r: (graph.order_keys.get(r["id"], ("~", 0)), r.get("family_number", str(r["id"]))))
+            marriages = repo.marriages(member_id)
             spouses = {r.spouse_two_id if r.spouse_one_id == member_id else r.spouse_one_id for r in marriages}
             result["spouses"] = [dict(graph.members[i], relationship_label="Spouse") for i in sorted(spouses, key=str)]
             visible = {member_id} | {r["id"] for r in result["ancestors"] + result["descendants"]}
@@ -282,13 +394,17 @@ class RelationshipService(ChildOrderMixin, Service):
             result["edges"] = [r for r in graph.relationships if r["relationship_type"] != "GUARDIAN"
                                and r["child_id"] in visible and r["parent_id"] in visible | co_parents]
             result["child_order"] = graph.order_keys
-            result["marriages"] = [snapshot(r) for r in RelationshipRepository(session).marriages()]
+            result["marriages"] = [snapshot(r) for r in all_marriages]
             return result
 
     def get_parents(self, member_id): return self.tree(member_id)["parents"]
     def get_guardians(self, member_id): return self.tree(member_id)["guardians"]
     def get_children(self, member_id): return self.tree(member_id)["children"]
     def get_siblings(self, member_id): return self.tree(member_id)["siblings"]
+    def get_full_siblings(self, member_id): return self.tree(member_id)["full_siblings"]
+    def get_half_siblings(self, member_id): return self.tree(member_id)["half_siblings"]
+    def get_step_siblings(self, member_id): return self.tree(member_id)["step_siblings"]
+    def get_stepchildren(self, member_id): return self.tree(member_id)["stepchildren"]
     def get_grandparents(self, member_id): return self.tree(member_id)["grandparents"]
     def get_grandchildren(self, member_id): return self.tree(member_id)["grandchildren"]
     def get_ancestors(self, member_id): return self.tree(member_id)["ancestors"]
@@ -299,6 +415,13 @@ class RelationshipService(ChildOrderMixin, Service):
 
     def get_mother(self, member_id):
         return next((r for r in self.get_parents(member_id) if r["relationship_type"] == "MOTHER"), None)
+
+    def get_sibling_relationship(self, member_a_id, member_b_id):
+        with self.transaction() as session:
+            FamilyRepository(session).get(member_a_id)
+            FamilyRepository(session).get(member_b_id)
+            repo = RelationshipRepository(session)
+            return self._sibling_kind(repo.list(), repo.marriages(), member_a_id, member_b_id)
 
     def get_generation_distance(self, ancestor_id, descendant_id):
         with self.transaction() as session:
@@ -328,8 +451,15 @@ class RelationshipService(ChildOrderMixin, Service):
             depth = graph.depths(member_b_id).get(member_a_id)
             if depth:
                 return generation_label(sex, depth, ancestor=False)
-            if member_a_id in {r["id"] for r in graph.siblings(member_b_id)}:
-                return "Brother" if sex == "MALE" else "Sister"
+            rows = RelationshipRepository(session).list()
+            marriages = RelationshipRepository(session).marriages()
+            sibling_kind = self._sibling_kind(rows, marriages, member_a_id, member_b_id)
+            if sibling_kind != "NOT_SIBLINGS":
+                return self._sibling_label(sex, sibling_kind)
+            if member_a_id in self._step_parent_ids(rows, marriages, member_b_id):
+                return "Stepfather" if sex == "MALE" else "Stepmother" if sex == "FEMALE" else "Stepparent"
+            if member_b_id in self._step_parent_ids(rows, marriages, member_a_id):
+                return "Stepchild"
             a_ancestors = graph.depths(member_a_id, ancestors=True)
             b_ancestors = graph.depths(member_b_id, ancestors=True)
             common = set(a_ancestors) & set(b_ancestors)

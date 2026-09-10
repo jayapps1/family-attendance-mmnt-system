@@ -1,4 +1,5 @@
 import pytest
+from datetime import date
 from PIL import Image
 from services.family_service import FamilyService
 from services.relationship_service import RelationshipService
@@ -48,7 +49,7 @@ def test_guardians_are_not_bloodline_and_siblings_deduplicate(db):
     links.save(mother["id"], sibling["id"], "MOTHER")
     links.save(guardian["id"], child["id"], "GUARDIAN")
     assert [r["id"] for r in links.get_siblings(child["id"])] == [sibling["id"]]
-    assert links.get_relationship_between(sibling["id"], child["id"]) == "Sister"
+    assert links.get_relationship_between(sibling["id"], child["id"]) == "Full Sister"
     assert links.get_relationship_between(guardian["id"], child["id"]) == "Guardian"
     assert links.get_descendants(guardian["id"]) == []
     assert links.get_guardians(child["id"])[0]["id"] == guardian["id"]
@@ -179,3 +180,74 @@ def test_collateral_relatives_and_two_parent_tree(db):
     nodes, edges, positions=generation_layout(tree)
     assert positions[father["id"]][1] == positions[people[2]["id"]][1]
     assert father["id"] not in generation_layout(tree,True)[0]
+
+
+def test_mixed_parentage_marriage_keeps_biological_links_separate(db):
+    context = service_context(db)
+    family, links = FamilyService(*context), RelationshipService(*context)
+    branches = BranchService(*context)
+
+    agnes = family.create(first_name="Agnes", last_name="Ampoful", sex="FEMALE",
+                          affiliation_type="LINEAGE_MEMBER", date_of_birth=date(1975, 1, 1))
+    michael = family.create(first_name="Michael", last_name="Ampoful", sex="MALE",
+                            affiliation_type="LINEAGE_MEMBER", date_of_birth=date(1998, 1, 1))
+    kofi = family.create(first_name="Kofi", last_name="Mensah", sex="MALE",
+                         affiliation_type="MARRIED_IN", date_of_birth=date(1970, 1, 1))
+    links.save(agnes["id"], michael["id"], "MOTHER")
+    links.save(kofi["id"], michael["id"], "FATHER")
+
+    james = family.create(first_name="James", last_name="Appiah-Gyachie", sex="MALE",
+                          affiliation_type="MARRIED_IN", date_of_birth=date(1974, 1, 1))
+    marriage = links.save_marriage(agnes["id"], james["id"])
+
+    assert links.get_father(michael["id"])["id"] == kofi["id"]
+    assert james["id"] not in {r["parent_id"] for r in links.list() if r["child_id"] == michael["id"]}
+
+    janet = links.add_child_to_marriage(marriage["id"], birth_order=1,
+        new_member=dict(first_name="Janet", last_name="Appiah-Gyachie", sex="FEMALE",
+                        affiliation_type="LINEAGE_MEMBER", date_of_birth=date(2001, 1, 1)))
+    daniel = links.add_child_to_marriage(marriage["id"], birth_order=2,
+        new_member=dict(first_name="Daniel", last_name="Appiah-Gyachie", sex="MALE",
+                        affiliation_type="LINEAGE_MEMBER", date_of_birth=date(2003, 1, 1)))
+
+    for child in (janet, daniel):
+        assert links.get_mother(child["id"])["id"] == agnes["id"]
+        assert links.get_father(child["id"])["id"] == james["id"]
+
+    assert {r["id"] for r in links.get_children(agnes["id"])} == {michael["id"], janet["id"], daniel["id"]}
+    assert {r["id"] for r in links.get_children(james["id"])} == {janet["id"], daniel["id"]}
+    assert {r["id"] for r in links.get_stepchildren(james["id"])} == {michael["id"]}
+
+    assert links.get_sibling_relationship(michael["id"], janet["id"]) == "HALF_SIBLING"
+    assert links.get_sibling_relationship(michael["id"], daniel["id"]) == "HALF_SIBLING"
+    assert links.get_sibling_relationship(janet["id"], daniel["id"]) == "FULL_SIBLING"
+    assert links.get_relationship_between(michael["id"], janet["id"]) == "Half Brother"
+    assert links.get_relationship_between(janet["id"], daniel["id"]) == "Full Sister"
+    assert links.get_relationship_between(james["id"], michael["id"]) == "Stepfather"
+
+    union = links.get_children_of_marriage(marriage["id"])
+    assert [r["id"] for r in union] == [janet["id"], daniel["id"]]
+    assert michael["id"] not in {r["id"] for r in union}
+
+    branch = branches.save("Agnes branch " + str(agnes["id"]), agnes["id"])
+    branch_members = {r["member"]["id"] for r in branches.get_branch_members(branch["id"])}
+    assert {agnes["id"], michael["id"], janet["id"], daniel["id"]} <= branch_members
+    assert james["id"] not in branch_members
+    assert kofi["id"] not in branch_members
+
+    child_with_unknown_father = links.add_child_to_marriage(marriage["id"],
+        spouse_one_parent_id=agnes["id"], spouse_one_type="MOTHER",
+        spouse_two_parent_id=None, spouse_two_type=None,
+        new_member=dict(first_name="Sarah", last_name="Ampoful", sex="FEMALE",
+                        affiliation_type="LINEAGE_MEMBER", date_of_birth=date(2005, 1, 1)))
+    assert links.get_mother(child_with_unknown_father["id"])["id"] == agnes["id"]
+    assert links.get_father(child_with_unknown_father["id"]) is None
+    assert child_with_unknown_father["id"] not in {r["id"] for r in links.get_children_of_marriage(marriage["id"])}
+
+    kojo = family.create(first_name="Kojo", last_name="Appiah-Gyachie", sex="MALE",
+                         affiliation_type="LINEAGE_MEMBER", date_of_birth=date(1999, 1, 1))
+    other_mother = family.create(first_name="Other", last_name="Mother", sex="FEMALE",
+                                 affiliation_type="MARRIED_IN", date_of_birth=date(1976, 1, 1))
+    links.save(james["id"], kojo["id"], "FATHER")
+    links.save(other_mother["id"], kojo["id"], "MOTHER")
+    assert links.get_sibling_relationship(kojo["id"], michael["id"]) == "STEP_SIBLING"

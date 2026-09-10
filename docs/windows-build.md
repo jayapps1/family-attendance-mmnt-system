@@ -40,3 +40,9 @@ Implementation references: [PyInstaller runtime paths](https://pyinstaller.org/e
 Rebuilt after the contribution eligibility and period/payment screen updates. Confirmed the new contribution modules are present in the executable. Packaged self-check passed database/schema, encryption, QR, PDF/Excel, backup/restore preflight and the real Tkinter login screen. ZIP integrity, SHA-256 and private configuration exclusion passed.
 
 ZIP SHA-256: `ce9c3deec5332b2f0b93124e6bec8f6a9e899f24da72b2f001f8e64d8650d1ea`.
+
+## Latest rebuild: 10 September 2026
+
+Rebuilt after the parentage, sibling and step-relationship corrections. Packaged self-check passed database/schema, encryption, QR, PDF/Excel, backup/restore preflight and the real Tkinter login screen.
+
+ZIP SHA-256: `0cf4a3ae2edfc28f03de8e957580d591f78f8f596dbd90bd6ac999bf5a749eda`.

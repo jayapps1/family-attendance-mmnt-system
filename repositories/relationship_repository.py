@@ -1,5 +1,5 @@
 from sqlalchemy import select, or_
-from models import FamilyRelationship, Marriage
+from models import FamilyRelationship, Marriage, RelationshipType
 from repositories.base import Repository
 
 
@@ -22,6 +22,8 @@ class RelationshipRepository(Repository[FamilyRelationship]):
         a, b = aliased(FamilyRelationship), aliased(FamilyRelationship)
         return list(self.session.scalars(select(FamilyMember).join(a, a.child_id == FamilyMember.id)
             .join(b, b.child_id == FamilyMember.id).where(a.parent_id == one, b.parent_id == two)
+            .where(a.relationship_type.in_((RelationshipType.FATHER, RelationshipType.MOTHER)))
+            .where(b.relationship_type.in_((RelationshipType.FATHER, RelationshipType.MOTHER)))
             .order_by(FamilyMember.date_of_birth.asc().nulls_last(), FamilyMember.family_number)))
 
     def child_metadata(self, marriage_id):

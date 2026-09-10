@@ -27,22 +27,22 @@ def add_child(app, row, success=None):
 
 
 def child_form(app, row, members, new=True, success=None):
-    roles = {r.title(): r for r in ('FATHER', 'MOTHER', 'GUARDIAN')}
+    roles = {'Unknown': None, **{r.title(): r for r in ('FATHER', 'MOTHER', 'GUARDIAN')}}
+    parent_choices = {'Unknown': None, **member_options([m for m in members])}
     fields, initial = [], {'marital_status': 'SINGLE', 'living_status': 'LIVING', 'affiliation_type': 'LINEAGE_MEMBER'}
     for key in ('spouse_one', 'spouse_two'):
         person = row[key]
-        fields.extend([Field('_' + key, 'Parent', choices=member_options([person]), required=True, section='Couple'),
-                       Field(key + '_type', 'Parent role', choices=roles, required=True, section='Couple')])
-        initial['_' + key] = person['id']
+        fields.extend([Field(key + '_parent_id', 'Biological parent', choices=parent_choices, section='Parentage'),
+                       Field(key + '_type', 'Parent role', choices=roles, section='Parentage')])
+        initial[key + '_parent_id'] = person['id']
         initial[key + '_type'] = 'FATHER' if person['sex'] == 'MALE' else 'MOTHER'
-    fields.append(Field('birth_order', 'Birth order within this couple', 'int', required=True, section='Couple'))
+    fields.append(Field('birth_order', 'Birth order within this union', 'int', section='Parentage'))
     initial['birth_order'] = row['child_count'] + 1
     fields += member_fields() if new else [Field('existing_id', 'Existing child', choices=member_options(
         [m for m in members if m['id'] not in (row['spouse_one_id'], row['spouse_two_id'])]), required=True)]
     def save(values):
         values = dict(values)
-        options = {k: values.pop(k) for k in ('spouse_one_type', 'spouse_two_type', 'birth_order')}
-        values.pop('_spouse_one'); values.pop('_spouse_two')
+        options = {k: values.pop(k) for k in ('spouse_one_parent_id', 'spouse_two_parent_id', 'spouse_one_type', 'spouse_two_type', 'birth_order')}
         options['confirmed_links'] = values.pop('confirmed_links', None)
         if new:
             options['new_member'] = values
@@ -72,8 +72,8 @@ def child_form(app, row, members, new=True, success=None):
                     return
                 if links:
                     link = links[0]
-                    key = 'spouse_one' if link['parent_id'] == row['spouse_one_id'] else 'spouse_two'
-                    person = row[key]
+                    key = 'spouse_one' if link['parent_id'] == values.get('spouse_one_parent_id') else 'spouse_two'
+                    person = row[key] if link['parent_id'] in (row['spouse_one_id'], row['spouse_two_id']) else {'first_name': 'This parent'}
                     if not messagebox.askyesno('Complete parent links', person['first_name'] + ' is already linked as ' +
                             link['relationship_type'].lower() + '. Keep this role and add the missing parent link?', parent=self):
                         return

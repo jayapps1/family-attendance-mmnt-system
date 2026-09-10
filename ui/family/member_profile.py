@@ -84,7 +84,9 @@ def show_profile(app, member, attendance, contributions, relationships=None, mar
             label = "Joined through marriage to"
         values = [(label if key == "spouses" else r.get("relationship_label", label)) + ": " + r["first_name"] + " " + r["last_name"] for r in relationships.get(key, [])]
         ttk.Label(summary.body, text="; ".join(values) or label + ": not recorded", style="Card.TLabel", wraplength=740).pack(anchor="w", pady=(0, 6))
-    counts = "    ".join(f"{key.title()}: {len(relationships.get(key, []))}" for key in ("children", "siblings", "grandparents", "grandchildren"))
+    counts = "    ".join(f"{label}: {len(relationships.get(key, []))}" for key, label in (
+        ("children", "Biological children"), ("stepchildren", "Stepchildren"),
+        ("siblings", "Siblings"), ("grandparents", "Grandparents"), ("grandchildren", "Grandchildren")))
     ttk.Label(summary.body, text=counts, style="Card.TLabel", wraplength=740).pack(anchor="w")
     branch_card = SectionCard(family, "Family branches", "Membership follows biological descent from each founder.")
     branch_card.pack(fill="x", pady=(0, 12))
@@ -94,11 +96,26 @@ def show_profile(app, member, attendance, contributions, relationships=None, mar
                    style="GhostButton.TButton", command=lambda b=branch: show_branch_details(app, b["id"])).pack(anchor="w", pady=2)
     if not branches:
         ttk.Label(branch_card.body, text="No branch lineage recorded yet.", style="CardHelper.TLabel").pack(anchor="w")
-    for key in ("parents", "guardians", "spouses", "children", "siblings", "grandparents", "grandchildren", "ancestors", "descendants", "wards"):
+    relationship_sections = (
+        ("parents", "Parents"),
+        ("guardians", "Guardians"),
+        ("spouses", "Spouse / Marriage"),
+        ("children", "Biological / Direct Children"),
+        ("stepchildren", "Stepchildren"),
+        ("full_siblings", "Full Siblings"),
+        ("half_siblings", "Half Siblings"),
+        ("step_siblings", "Step-Siblings"),
+        ("grandparents", "Grandparents"),
+        ("grandchildren", "Grandchildren"),
+        ("ancestors", "Ancestors"),
+        ("descendants", "Descendants"),
+        ("wards", "Wards"),
+    )
+    for key, title in relationship_sections:
         rows = relationships.get(key, [])
         if not rows:
             continue
-        section = SectionCard(family, key.title())
+        section = SectionCard(family, title)
         section.pack(fill="x", pady=(0, 12))
         for row in rows:
             name = " ".join(filter(None, (row.get("first_name"), row.get("middle_name"), row.get("last_name"))))
